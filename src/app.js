@@ -13,10 +13,19 @@ const adminRoutes = require("./routes/adminRoutes");
 
 const app = express();
 
-// CORS configuration - allow all origins for Render deployment
+const configuredOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: "*",
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (configuredOrigins.length === 0) return callback(null, true);
+      if (configuredOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("CORS origin blocked"));
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -25,6 +34,11 @@ app.use(express.json());
 
 app.get("/", (req, res) => {
   res.status(200).json({ message: "Hybrid Bus Tracking backend running" });
+});
+
+// Root health endpoint for backward compatibility
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 app.use("/api/health", healthRoutes);
