@@ -4,15 +4,14 @@ const router = express.Router();
 const {
   updateLocation,
   getAllBusLocations,
-  getNearestStop
+  getNearestSingleBus
 } = require("../controllers/locationController");
-const { requireAuth } = require("../middleware/authMiddleware");
 
-// POST route - public (no auth required for driver updates)
+// POST route
 router.post("/update", updateLocation);
 
 // GET routes
 router.get("/all", getAllBusLocations);
-router.get("/nearest-stop", requireAuth, getNearestStop);
+router.get("/nearest-stop", getNearestSingleBus);
 
 module.exports = router;

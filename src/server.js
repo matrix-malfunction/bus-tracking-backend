@@ -27,16 +27,14 @@ io.on("connection", (socket) => {
 
 async function startServer() {
   try {
-    // Connect to MongoDB
-    await connectDB(process.env.MONGO_URI);
-    console.log("✅ Connected to MongoDB");
+    await connectDB(process.env.MONGODB_URI);
 
     server.listen(port, "0.0.0.0", () => {
-      console.log(`🚀 Server running on port ${port}`);
-      console.log(`📡 API available at http://0.0.0.0:${port}`);
+      console.log(`Server listening on port ${port}`);
+      console.log(`Server running on http://0.0.0.0:${port}`);
     });
   } catch (error) {
-    console.error("❌ Failed to start server:", error.message);
+    console.error("Failed to start server:", error.message);
     process.exit(1);
   }
 }

@@ -1,13 +1,20 @@
-const Location = require("../models/Location");
+const BusLocation = require("../models/BusLocation");
 const Bus = require("../models/Bus");
 const Route = require("../models/Route");
 const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
+const { chooseBestSource } = require("../services/hybridSourceSelector");
 const { haversineKm } = require("../services/etaService");
 const { defaultCache } = require("../services/locationCache");
 
-const ACTIVE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
-const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes for stale data
+const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
+const EMIT_DISTANCE_THRESHOLD_METERS = 15;
+const MIN_SPEED_KMPH = 10;
+const DEFAULT_SPEED_KMPH = 30;
+const MAX_SPEED_KMPH = 80;
+const STOP_THRESHOLD_METERS = 15;
+const MIN_TIME_DIFF_SEC = 3;
+const JITTER_THRESHOLD_METERS = 8;
 
 function logInfo(event, data = {}) {
   console.log(
@@ -27,53 +34,8 @@ function getTime(doc) {
 function isStale(doc, nowMs = Date.now()) {
   const t = getTime(doc);
   const stamp = t.getTime();
-  if (!Number.isFinite(stamp) || stamp <= 0) return true; // Consider invalid timestamps as stale
+  if (!Number.isFinite(stamp) || stamp <= 0) return false;
   return nowMs - stamp > ACTIVE_WINDOW_MS;
-}
-
-function isValidCoordinate(lat, lng) {
-  const numLat = Number(lat);
-  const numLng = Number(lng);
-  return (
-    Number.isFinite(numLat) &&
-    Number.isFinite(numLng) &&
-    numLat >= -90 &&
-    numLat <= 90 &&
-    numLng >= -180 &&
-    numLng <= 180
-  );
-}
-
-function chooseBestSource(location, nowMs = Date.now()) {
-  // Check ESP32 snapshot first (hardware has priority)
-  if (location?.esp32Snapshot?.timestamp) {
-    const esp32Ts = new Date(location.esp32Snapshot.timestamp).getTime();
-    if (nowMs - esp32Ts <= STALE_THRESHOLD_MS) {
-      return {
-        source: "hardware",
-        lat: location.esp32Snapshot.lat,
-        lng: location.esp32Snapshot.lng,
-        speed: location.esp32Snapshot.speed || 0,
-        timestamp: location.esp32Snapshot.timestamp,
-      };
-    }
-  }
-
-  // Fall back to mobile snapshot
-  if (location?.mobileSnapshot?.timestamp) {
-    const mobileTs = new Date(location.mobileSnapshot.timestamp).getTime();
-    if (nowMs - mobileTs <= STALE_THRESHOLD_MS) {
-      return {
-        source: "mobile",
-        lat: location.mobileSnapshot.lat,
-        lng: location.mobileSnapshot.lng,
-        speed: location.mobileSnapshot.speed || 0,
-        timestamp: location.mobileSnapshot.timestamp,
-      };
-    }
-  }
-
-  return null;
 }
 
 function clampEtaMinutes(value) {
@@ -146,151 +108,89 @@ async function getNextStop(busLat, busLng, route) {
 
 exports.updateLocation = async (req, res) => {
   try {
-    console.log("📥 RAW BODY:", JSON.stringify(req.body));
+    console.log("📥 RAW BODY:", req.body);
+    console.log("STEP 1 - Incoming lat/lng:", { 
+      busId: req.body.busId, 
+      lat: req.body.lat, 
+      lng: req.body.lng,
+      latType: typeof req.body.lat,
+      lngType: typeof req.body.lng
+    });
 
     const { busId, lat, lng, source } = req.body;
 
-    // Validation
-    if (!busId || typeof busId !== "string" || busId.trim() === "") {
-      console.log("❌ Missing or invalid busId:", busId);
-      return res.status(400).json({ error: "Missing or invalid busId" });
+    if (!busId || lat == null || lng == null) {
+      console.log("❌ Missing fields:", { busId, lat, lng });
+      return res.status(400).json({ error: "Missing fields" });
     }
 
-    // Validate lat/lng are numbers and not null
-    if (lat === null || lat === undefined || lng === null || lng === undefined) {
-      console.log("❌ Coordinates cannot be null:", { lat, lng });
-      return res.status(400).json({ error: "lat and lng are required" });
-    }
-
-    if (isNaN(Number(lat)) || isNaN(Number(lng))) {
-      console.log("❌ Coordinates must be valid numbers:", { lat, lng });
-      return res.status(400).json({ error: "lat and lng must be numbers" });
-    }
-
-    if (!isValidCoordinate(lat, lng)) {
-      console.log("❌ Invalid coordinate ranges:", { lat, lng });
-      return res.status(400).json({ error: "Invalid coordinates. lat: -90 to 90, lng: -180 to 180" });
-    }
-
-    const normalizedSource = source === "hardware" ? "hardware" : "mobile";
-    const now = new Date();
+    // STRICT VALIDATION - Reject null/invalid lat/lng
     const numLat = Number(lat);
     const numLng = Number(lng);
-
-    // GeoJSON format: [longitude, latitude]
-    const geoLocation = {
-      type: "Point",
-      coordinates: [numLng, numLat],
-    };
-
-    // Prepare snapshot data
-    const snapshotData =
-      normalizedSource === "hardware"
-        ? {
-            esp32Snapshot: {
-              lat: numLat,
-              lng: numLng,
-              speed: 0,
-              timestamp: now,
-            },
-          }
-        : {
-            mobileSnapshot: {
-              lat: numLat,
-              lng: numLng,
-              speed: 0,
-              timestamp: now,
-            },
-          };
-
-    // Upsert with atomic operation
-    const location = await Location.findOneAndUpdate(
-      { busId: busId.trim() },
-      {
-        $set: {
-          busId: busId.trim(),
-          latitude: numLat,
-          longitude: numLng,
-          location: geoLocation,
-          source: normalizedSource,
-          updatedAt: now,
-          timestamp: now,
-          ...snapshotData,
-        },
-      },
-      {
-        upsert: true,
-        new: true,
-        runValidators: true,
-      }
-    );
-
-    console.log("✅ SAVED TO DB:", {
-      busId: location.busId,
-      lat: location.latitude,
-      lng: location.longitude,
-      geo: location.location,
-      source: location.source,
-    });
-
-    // Emit socket update with route intelligence
-    const io = req.app.get("io");
-    if (io) {
-      // Get route info if available
-      const Route = require("../models/Route");
-      let routeInfo = null;
-      
-      try {
-        const route = await Route.findById(location.routeId);
-        if (route) {
-          const { getBusRouteIntelligence } = require("../utils/routeIntelligence");
-          routeInfo = getBusRouteIntelligence(
-            { latitude: location.latitude, longitude: location.longitude, speed: 0, busId: location.busId },
-            route,
-            location.busId
-          );
-        }
-      } catch (err) {
-        // Route not found or error, continue without route info
-      }
-      
-      io.emit("busLocationUpdate", {
-        busId: location.busId,
-        lat: location.latitude,
-        lng: location.longitude,
-        source: location.source,
-        location: location.location,
-        updatedAt: location.updatedAt,
-        routeInfo: routeInfo ? {
-          routeName: routeInfo.routeName,
-          nextStop: routeInfo.nextStop,
-          stopsAway: routeInfo.stopsAway,
-          etaMinutes: routeInfo.etaMinutes,
-          routeDistanceKm: routeInfo.routeDistanceKm,
-          progress: routeInfo.progress,
-          isConfident: routeInfo.isConfident,
-          smoothedSpeedKmh: routeInfo.smoothedSpeedKmh,
-          trafficMultiplier: routeInfo.trafficMultiplier,
-          isMovingForward: routeInfo.isMovingForward,
-        } : null,
-      });
-      console.log("📡 busLocationUpdate emitted:", location.busId);
+    
+    if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) {
+      console.log("❌ Invalid lat/lng:", { lat, lng, numLat, numLng });
+      return res.status(400).json({ error: "Invalid lat/lng values" });
+    }
+    
+    if (numLat < -90 || numLat > 90 || numLng < -180 || numLng > 180) {
+      console.log("❌ Out of range lat/lng:", { numLat, numLng });
+      return res.status(400).json({ error: "Lat/lng out of valid range" });
     }
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        busId: location.busId,
-        latitude: location.latitude,
-        longitude: location.longitude,
-        location: location.location,
-        source: location.source,
-        updatedAt: location.updatedAt,
+    const updated = await BusLocation.findOneAndUpdate(
+      { busId: busId.trim() },
+      {
+        busId: busId.trim(),
+        lat: numLat,
+        lng: numLng,
+        source: source || "mobile",
+        updatedAt: new Date(),
       },
+      { upsert: true, new: true }
+    );
+
+    console.log("✅ SAVED TO DB:", updated);
+    console.log("STEP 2 - Saved document:", {
+      busId: updated.busId,
+      lat: updated.lat,
+      lng: updated.lng
     });
+    const io = req.app.get("io");
+
+    if (io) {
+      io.emit("busLocationUpdate", {
+        busId,
+        lat,
+        lng,
+      });
+
+      console.log("📡 busLocationUpdate emitted:", busId);
+
+      const route = await Route.findOne({ routeName: "Vellore Route" });
+
+      if (!route || !route.stops || route.stops.length === 0) {
+        console.log("⚠️ No route data found");
+      } else {
+        const next = await getNextStop(Number(lat), Number(lng), route);
+
+        // average speed (adjustable)
+        const avgSpeed = 30; // km/h
+        const etaMinutes = Math.max(1, Math.round((next.distance / avgSpeed) * 60));
+
+        io.emit("busETAUpdate", {
+          busId,
+          nextStop: next.stop.name,
+          eta: etaMinutes,
+        });
+
+        console.log("🕒 ETA EMITTED:", next.stop.name, etaMinutes);
+      }
+    }
+
+    return res.json({ success: true, data: updated });
   } catch (err) {
-    console.error("🔥 BACKEND ERROR:", err.message);
-    console.error(err.stack);
+    console.error("🔥 BACKEND ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 };
@@ -305,23 +205,6 @@ async function getNearestStopHandler(req, res) {
 
     defaultCache.deleteStale(ACTIVE_WINDOW_MS);
     const normalizeBus = (item) => {
-      // Use hybrid source selection to get best coordinates
-      const best = chooseBestSource(item, nowMs);
-      if (best) {
-        return {
-          busId: item.busId,
-          latitude: best.lat,
-          longitude: best.lng,
-          speed: Number(best.speed) || 0,
-          source: best.source,
-          routeId: item.routeId || null,
-          updatedAt: best.timestamp,
-          timestamp: best.timestamp,
-          name: item.name || item.busId,
-        };
-      }
-
-      // Fallback to direct coordinates if no snapshot available
       const latitude = Number(item?.latitude ?? item?.lat);
       const longitude = Number(item?.longitude ?? item?.lng);
       const valid = Number.isFinite(latitude) && Number.isFinite(longitude);
@@ -331,7 +214,6 @@ async function getNearestStopHandler(req, res) {
         latitude,
         longitude,
         speed: Number(item.speed) || 0,
-        source: item.source || "unknown",
         routeId: item.routeId || null,
         updatedAt: item.updatedAt || item.timestamp || null,
         timestamp: item.timestamp || item.updatedAt || null,
@@ -346,10 +228,10 @@ async function getNearestStopHandler(req, res) {
     let filteredCount = cacheFiltered.length;
 
     if (cacheCandidates.length === 0 || buses.length === 0) {
-      const dbCandidatesRaw = await Location.find({})
-        .sort({ updatedAt: -1, timestamp: -1 })
+      const dbCandidatesRaw = await BusLocation.find({})
+        .sort({ updatedAt: -1 })
         .limit(50)
-        .select("busId latitude longitude lat lng speed routeId updatedAt timestamp mobileSnapshot esp32Snapshot source")
+        .select("busId lat lng updatedAt")
         .lean();
       dbCount = dbCandidatesRaw.length;
 
@@ -569,72 +451,139 @@ async function getNearestStopHandler(req, res) {
 
 exports.getAllBusLocations = async (req, res) => {
   try {
-    const nowMs = Date.now();
-    const allLocations = await Location.find({}).lean();
+    const buses = await BusLocation.find({});
+    console.log("STEP 3 - Raw DB data count:", buses.length);
+    console.log("STEP 3 - First raw doc:", buses[0] ? {
+      busId: buses[0].busId,
+      lat: buses[0].lat,
+      lng: buses[0].lng
+    } : "No buses found");
 
-    // Load all routes for intelligence
-    const Route = require("../models/Route");
-    const routes = await Route.find({}).lean();
-    const routeMap = new Map(routes.map(r => [r._id.toString(), r]));
+    // CLEAN MAPPING - No fallbacks, direct field access only
+    const formatted = buses.map(b => ({
+      busId: b.busId,
+      lat: b.lat,
+      lng: b.lng,
+      updatedAt: b.updatedAt
+    }));
     
-    const { getBusRouteIntelligence } = require("../utils/routeIntelligence");
-
-    // Filter out stale and invalid data
-    const validBuses = await Promise.all(
-      allLocations
-        .map(async (loc) => {
-          const best = chooseBestSource(loc, nowMs);
-          if (!best) return null;
-          
-          // Get route intelligence if routeId exists
-          let routeInfo = null;
-          if (loc.routeId) {
-            const route = routeMap.get(loc.routeId.toString());
-            if (route) {
-              routeInfo = getBusRouteIntelligence(
-                { latitude: best.lat, longitude: best.lng, speed: 0, busId: loc.busId },
-                route,
-                loc.busId
-              );
-            }
-          }
-          
-          return {
-            busId: loc.busId,
-            latitude: best.lat,
-            longitude: best.lng,
-            source: best.source,
-            updatedAt: getTime(loc).toISOString(),
-            routeInfo: routeInfo ? {
-              routeName: routeInfo.routeName,
-              nextStop: routeInfo.nextStop,
-              stopsAway: routeInfo.stopsAway,
-              etaMinutes: routeInfo.etaMinutes,
-              routeDistanceKm: routeInfo.routeDistanceKm,
-              progress: routeInfo.progress,
-              isConfident: routeInfo.isConfident,
-              smoothedSpeedKmh: routeInfo.smoothedSpeedKmh,
-              trafficMultiplier: routeInfo.trafficMultiplier,
-              isMovingForward: routeInfo.isMovingForward,
-              allStops: routeInfo.allStops,
-            } : null,
-          };
-        })
-        .filter(Boolean)
+    // Filter out any documents with null/undefined lat or lng
+    const validOnly = formatted.filter(b => 
+      Number.isFinite(b.lat) && Number.isFinite(b.lng)
     );
+    
+    if (validOnly.length !== formatted.length) {
+      console.log(`⚠️ Filtered ${formatted.length - validOnly.length} buses with invalid lat/lng`);
+    }
 
-    return res.status(200).json({
-      count: validBuses.length,
-      buses: validBuses,
-    });
+    console.log("STEP 4 - Mapped response count:", validOnly.length);
+    console.log("STEP 4 - First mapped doc:", validOnly[0] ? {
+      busId: validOnly[0].busId,
+      lat: validOnly[0].lat,
+      lng: validOnly[0].lng
+    } : "No valid buses");
+
+    // Clean response - only valid buses with lat/lng
+    res.json(validOnly);
   } catch (err) {
-    console.error("❌ Failed to fetch buses:", err.message);
+    console.error("❌ getAllBusLocations error:", err);
     res.status(500).json({ error: "Failed to fetch buses" });
   }
 };
+
+// GET /api/location/nearest-stop - Returns ONLY ONE nearest bus
+async function getNearestSingleBus(req, res) {
+  try {
+    // Validate query params
+    const lat = Number(req.query.lat);
+    const lng = Number(req.query.lng);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: "Missing or invalid lat/lng query parameters" });
+    }
+
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: "Lat/lng out of valid range" });
+    }
+
+    // Fetch all bus locations from MongoDB
+    const buses = await BusLocation.find({})
+      .select("busId lat lng updatedAt timestamp")
+      .lean();
+
+    // Handle empty DB case
+    if (!buses || buses.length === 0) {
+      return res.status(404).json({ error: "No buses found in database" });
+    }
+
+    // Stale threshold: 60 seconds
+    const STALE_THRESHOLD_MS = 60 * 1000;
+    const now = Date.now();
+
+    // Compute nearest using Haversine formula (in meters)
+    let nearestBus = null;
+    let minDistanceMeters = Infinity;
+
+    for (const bus of buses) {
+      const busLat = Number(bus.lat);
+      const busLng = Number(bus.lng);
+
+      // Filter invalid coordinates
+      if (!Number.isFinite(busLat) || !Number.isFinite(busLng)) continue;
+
+      // Ignore stale buses (updatedAt older than 60 seconds)
+      const updatedAt = bus.updatedAt || bus.timestamp;
+      if (updatedAt) {
+        const busTime = new Date(updatedAt).getTime();
+        if (now - busTime > STALE_THRESHOLD_MS) continue;
+      }
+
+      // Haversine formula (R = 6371000 meters)
+      const R = 6371000;
+      const dLat = ((busLat - lat) * Math.PI) / 180;
+      const dLng = ((busLng - lng) * Math.PI) / 180;
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((lat * Math.PI) / 180) *
+          Math.cos((busLat * Math.PI) / 180) *
+          Math.sin(dLng / 2) *
+          Math.sin(dLng / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const distanceMeters = R * c;
+
+      if (distanceMeters < minDistanceMeters) {
+        minDistanceMeters = distanceMeters;
+        nearestBus = bus;
+      }
+    }
+
+    // Handle case where no valid bus found
+    if (!nearestBus) {
+      return res.status(404).json({ error: "No valid or recent bus locations found" });
+    }
+
+    // Prevent null crashes - validate nearestBus before accessing
+    if (!nearestBus.busId || !nearestBus.lat || !nearestBus.lng) {
+      return res.status(404).json({ error: "Nearest bus has invalid data" });
+    }
+
+    // Return single bus object with distance
+    return res.status(200).json({
+      busId: nearestBus.busId,
+      latitude: Number(nearestBus.lat),
+      longitude: Number(nearestBus.lng),
+      distanceMeters: Math.round(minDistanceMeters),
+      updatedAt: nearestBus.updatedAt || nearestBus.timestamp,
+    });
+  } catch (error) {
+    console.error("[ERROR] getNearestSingleBus:", error);
+    return res.status(500).json({ error: "Server error fetching nearest bus" });
+  }
+}
 
 module.exports = {
   updateLocation: exports.updateLocation,
   getAllBusLocations: exports.getAllBusLocations,
   getNearestStop: getNearestStopHandler,
+  getNearestSingleBus: getNearestSingleBus,
 };

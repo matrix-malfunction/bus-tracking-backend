@@ -17,7 +17,7 @@ async function connectDB(mongodbUri) {
   }
 
   if (!mongodbUri || !mongodbUri.trim()) {
-    throw new Error("MONGO_URI is missing");
+    throw new Error("MONGODB_URI is missing");
   }
 
   if (!listenersAttached) {

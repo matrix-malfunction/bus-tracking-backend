@@ -41,12 +41,11 @@ const locationSchema = new mongoose.Schema(
       type: {
         type: String,
         enum: ["Point"],
-        required: true,
         default: "Point",
       },
       coordinates: {
         type: [Number],
-        required: true,
+        default: undefined,
       },
     },
     mobileSnapshot: {
@@ -76,6 +75,5 @@ const locationSchema = new mongoose.Schema(
 locationSchema.index({ updatedAt: -1 });
 locationSchema.index({ timestamp: -1 });
 locationSchema.index({ routeId: 1, updatedAt: -1 });
-locationSchema.index({ location: "2dsphere" });
 
 module.exports = mongoose.model("Location", locationSchema);

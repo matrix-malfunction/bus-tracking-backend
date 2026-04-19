@@ -9,69 +9,20 @@ const { sendPassengerSos } = require("../controllers/passengerFeatureController"
 
 const router = express.Router();
 
-const ACTIVE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
-
-function isValidCoordinate(lat, lng) {
-  return (
-    Number.isFinite(lat) &&
-    Number.isFinite(lng) &&
-    lat >= -90 &&
-    lat <= 90 &&
-    lng >= -180 &&
-    lng <= 180
-  );
-}
-
-function isFresh(doc, nowMs = Date.now()) {
-  const timestamp = doc?.updatedAt || doc?.timestamp;
-  if (!timestamp) return false;
-  const ts = new Date(timestamp).getTime();
-  if (!Number.isFinite(ts) || ts <= 0) return false;
-  return nowMs - ts <= ACTIVE_WINDOW_MS;
-}
-
 router.get("/nearby-buses", requireAuth, requireRole("passenger"), async (req, res) => {
   try {
-    const nowMs = Date.now();
-
-    const allLocations = await Location.find()
-      .select("busId latitude longitude lat lng source updatedAt timestamp -_id")
-      .sort({ updatedAt: -1, timestamp: -1 })
+    const buses = await Location.find()
+      .select("busId latitude longitude timestamp -_id")
+      .sort({ timestamp: -1 })
       .lean();
-
-    // Filter out stale and invalid data
-    const validBuses = allLocations
-      .filter((loc) => {
-        // Check freshness
-        if (!isFresh(loc, nowMs)) return false;
-
-        // Validate coordinates (handle both lat/lng and latitude/longitude field names)
-        const lat = loc.latitude ?? loc.lat;
-        const lng = loc.longitude ?? loc.lng;
-        return isValidCoordinate(lat, lng);
-      })
-      .map((loc) => ({
-        busId: loc.busId,
-        latitude: loc.latitude ?? loc.lat,
-        longitude: loc.longitude ?? loc.lng,
-        source: loc.source || "unknown",
-        timestamp: loc.updatedAt || loc.timestamp,
-      }));
-
-    console.log("📍 nearby-buses:", {
-      totalInDb: allLocations.length,
-      validBuses: validBuses.length,
-      requestedBy: req.user?.id,
-    });
 
     return res.status(200).json({
       message: "Nearby buses fetched successfully",
       role: req.user.role,
       userId: req.user.id,
-      buses: validBuses,
+      buses,
     });
   } catch (error) {
-    console.error("❌ Failed to fetch nearby buses:", error.message);
     return res.status(500).json({ message: "Failed to fetch nearby buses" });
   }
 });
