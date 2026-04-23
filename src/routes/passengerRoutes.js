@@ -1,7 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const { requireAuth, requireRole } = require("../middleware/authMiddleware");
-const Location = require("../models/Location");
+const Bus = require("../models/Bus");
 const Route = require("../models/Route");
 const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
@@ -11,9 +11,9 @@ const router = express.Router();
 
 router.get("/nearby-buses", requireAuth, requireRole("passenger"), async (req, res) => {
   try {
-    const buses = await Location.find()
-      .select("busId latitude longitude timestamp -_id")
-      .sort({ timestamp: -1 })
+    const buses = await Bus.find({ status: "active" })
+      .select("busId lat lng location speed heading status lastUpdate -_id")
+      .sort({ lastUpdate: -1 })
       .lean();
 
     return res.status(200).json({

@@ -1,0 +1,55 @@
+PATCH for passengerController.js
+=================================
+
+LOCATION 1: Change import (line 1)
+----------------------------------
+
+OLD:
+const Location = require("../models/Location");
+
+NEW:
+const Bus = require("../models/Bus");
+
+
+LOCATION 2: Update query (lines 15-27)
+--------------------------------------
+
+OLD CODE:
+    const buses = await Location.find({
+      location: {
+        $near: {
+          $geometry: {
+            type: "Point",
+            coordinates: [longitude, latitude],
+          },
+          $maxDistance: radiusMeters,
+        },
+      },
+    })
+      .select("busId lat lng speed source updatedAt -_id")
+      .lean();
+
+NEW CODE:
+    const buses = await Bus.find({
+      location: {
+        $near: {
+          $geometry: {
+            type: "Point",
+            coordinates: [longitude, latitude],
+          },
+          $maxDistance: radiusMeters,
+        },
+      },
+      status: "active",
+      lastUpdate: { $gte: new Date(Date.now() - 5 * 60 * 1000) }, // Active in last 5 min
+    })
+      .select("busId latitude longitude speed source lastUpdate -_id")
+      .lean();
+
+
+WHY THIS CHANGE
+---------------
+- Location model and Bus model now have the same geospatial "location" field
+- But Location model doesn't have "status" field
+- Bus model has better indexing and TTL support
+- This ensures consistency with /api/buses/nearby endpoint

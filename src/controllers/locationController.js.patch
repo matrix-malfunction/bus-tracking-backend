@@ -1,0 +1,96 @@
+PATCH for locationController.js
+================================
+
+LOCATION 1: Add Bus model write after line 151
+----------------------------------------------
+
+AFTER this block (lines 141-151):
+    const updated = await BusLocation.findOneAndUpdate(
+      { busId: busId.trim() },
+      {
+        busId: busId.trim(),
+        lat: numLat,
+        lng: numLng,
+        source: source || "mobile",
+        updatedAt: new Date(),
+      },
+      { upsert: true, new: true }
+    );
+
+ADD this code:
+
+    // ALSO update the geospatial Bus model (new merged model)
+    // This ensures /api/buses/nearby and geospatial queries work
+    await Bus.findOneAndUpdate(
+      { busId: busId.trim() },
+      {
+        $set: {
+          busId: busId.trim(),
+          location: {
+            type: "Point",
+            coordinates: [numLng, numLat],  // GeoJSON: [longitude, latitude]
+          },
+          latitude: numLat,
+          longitude: numLng,
+          lat: numLat,
+          lng: numLng,
+          speed: req.body.speed || 0,
+          heading: req.body.heading || 0,
+          source: source || "mobile",
+          status: "active",
+          lastUpdate: new Date(),
+          timestamp: new Date(),
+        },
+      },
+      { upsert: true, new: true }
+    );
+    console.log("✅ ALSO SAVED TO Bus MODEL (geospatial)", {
+      busId: busId.trim(),
+      lat: numLat,
+      lng: numLng,
+    });
+
+
+LOCATION 2: Update getAllBusLocations (lines 452-454)
+----------------------------------------------------
+
+OLD CODE:
+    const buses = await BusLocation.find({});
+
+NEW CODE:
+    const buses = await Bus.find({ status: "active" })
+      .select("busId latitude longitude lat lng speed source lastUpdate timestamp -_id")
+      .lean();
+
+
+LOCATION 3: Update DB fallback query (around line 231)
+------------------------------------------------------
+
+OLD CODE:
+      const dbCandidatesRaw = await BusLocation.find({})
+        .sort({ updatedAt: -1 })
+        .limit(50)
+        .select("busId lat lng updatedAt")
+
+NEW CODE:
+      const dbCandidatesRaw = await Bus.find({ status: "active" })
+        .sort({ lastUpdate: -1 })
+        .limit(50)
+        .select("busId lat lng latitude longitude lastUpdate")
+
+
+IMPORT STATEMENT (line 1-2)
+---------------------------
+
+Ensure these imports exist:
+const BusLocation = require("../models/BusLocation");  // Keep for backward compat
+const Bus = require("../models/Bus");                  // ADD if missing
+
+
+HOW TO APPLY
+------------
+1. Open backend/src/controllers/locationController.js
+2. Find each location above using Ctrl+F
+3. Make the specified changes
+4. Save file
+5. Test with: npm run dev

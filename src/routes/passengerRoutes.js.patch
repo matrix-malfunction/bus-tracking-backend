@@ -1,0 +1,79 @@
+PATCH for passengerRoutes.js
+=============================
+
+LOCATION 1: Add Bus import (after line 3)
+-----------------------------------------
+
+AFTER:
+const { requireAuth, requireRole } = require("../middleware/authMiddleware");
+
+ADD:
+const Bus = require("../models/Bus");
+
+
+LOCATION 2: Change import (line 4)
+----------------------------------
+
+OPTIONAL: You can keep Location import if needed elsewhere,
+otherwise replace:
+
+OLD:
+const Location = require("../models/Location");
+
+NEW:
+// const Location = require("../models/Location"); // Replaced by Bus model
+
+
+LOCATION 3: Update nearby-buses query (lines 14-17)
+---------------------------------------------------
+
+OLD CODE:
+    const buses = await Location.find()
+      .select("busId latitude longitude timestamp -_id")
+      .sort({ timestamp: -1 })
+      .lean();
+
+NEW CODE:
+    const buses = await Bus.find({
+      status: "active",
+      lastUpdate: { $gte: new Date(Date.now() - 5 * 60 * 1000) }, // Active in last 5 min
+    })
+      .select("busId latitude longitude speed source lastUpdate -_id")
+      .sort({ lastUpdate: -1 })
+      .lean();
+
+
+LOCATION 4: Update response (lines 19-24)
+-----------------------------------------
+
+OLD:
+    return res.status(200).json({
+      message: "Nearby buses fetched successfully",
+      role: req.user.role,
+      userId: req.user.id,
+      buses,
+    });
+
+NEW:
+    return res.status(200).json({
+      message: "Nearby buses fetched successfully",
+      role: req.user.role,
+      userId: req.user.id,
+      count: buses.length,
+      buses: buses.map(b => ({
+        busId: b.busId,
+        latitude: b.latitude,
+        longitude: b.longitude,
+        speed: b.speed,
+        source: b.source,
+        lastUpdate: b.lastUpdate,
+      })),
+    });
+
+
+IMPORTANT NOTE
+--------------
+This endpoint (/api/passenger/nearby-buses) is DIFFERENT from
+/api/passenger/nearby-buses in passengerController.js
+
+Both need to be updated to use the Bus model for consistency.

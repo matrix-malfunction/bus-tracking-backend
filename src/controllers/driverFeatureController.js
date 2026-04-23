@@ -1,5 +1,5 @@
 const DriverEmergency = require("../models/DriverEmergency");
-const BusLocation = require("../models/BusLocation");
+const Bus = require("../models/Bus");
 
 async function reportDriverEmergency(req, res) {
   try {
@@ -43,9 +43,9 @@ async function triggerSos(req, res) {
       return res.status(400).json({ message: "busId is required" });
     }
 
-    const latestBusLocation = await BusLocation.findOne({ busId }).lean();
-    const latitude = Number(latestBusLocation?.lat);
-    const longitude = Number(latestBusLocation?.lng);
+    const latestBus = await Bus.findOne({ busId }).lean();
+    const latitude = Number(latestBus?.location?.coordinates?.[1] || latestBus?.lat);
+    const longitude = Number(latestBus?.location?.coordinates?.[0] || latestBus?.lng);
 
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
       return res.status(400).json({ message: "No valid bus location available for SOS" });

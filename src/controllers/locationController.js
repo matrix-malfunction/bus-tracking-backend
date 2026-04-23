@@ -1,4 +1,3 @@
-const BusLocation = require("../models/BusLocation");
 const Bus = require("../models/Bus");
 const Route = require("../models/Route");
 const Stop = require("../models/Stop");
@@ -138,20 +137,28 @@ exports.updateLocation = async (req, res) => {
       return res.status(400).json({ error: "Lat/lng out of valid range" });
     }
 
-    const updated = await BusLocation.findOneAndUpdate(
+    // Update geospatial Bus model (single source of truth)
+    const updated = await Bus.findOneAndUpdate(
       { busId: busId.trim() },
       {
-        busId: busId.trim(),
-        lat: numLat,
-        lng: numLng,
-        source: source || "mobile",
-        updatedAt: new Date(),
+        $set: {
+          busId: busId.trim(),
+          location: {
+            type: "Point",
+            coordinates: [numLng, numLat],
+          },
+          lat: numLat,
+          lng: numLng,
+          speed: req.body.speed || 0,
+          heading: req.body.heading || 0,
+          status: "active",
+          lastUpdate: new Date(),
+        },
       },
       { upsert: true, new: true }
     );
 
-    console.log("✅ SAVED TO DB:", updated);
-    console.log("STEP 2 - Saved document:", {
+    console.log("✅ SAVED TO DB (Bus model):", {
       busId: updated.busId,
       lat: updated.lat,
       lng: updated.lng
@@ -228,10 +235,10 @@ async function getNearestStopHandler(req, res) {
     let filteredCount = cacheFiltered.length;
 
     if (cacheCandidates.length === 0 || buses.length === 0) {
-      const dbCandidatesRaw = await BusLocation.find({})
-        .sort({ updatedAt: -1 })
+      const dbCandidatesRaw = await Bus.find({ status: "active" })
+        .sort({ lastUpdate: -1 })
         .limit(50)
-        .select("busId lat lng updatedAt")
+        .select("busId lat lng speed heading status lastUpdate")
         .lean();
       dbCount = dbCandidatesRaw.length;
 
@@ -451,20 +458,20 @@ async function getNearestStopHandler(req, res) {
 
 exports.getAllBusLocations = async (req, res) => {
   try {
-    const buses = await BusLocation.find({});
+    const buses = await Bus.find({ status: "active" });
     console.log("STEP 3 - Raw DB data count:", buses.length);
     console.log("STEP 3 - First raw doc:", buses[0] ? {
       busId: buses[0].busId,
-      lat: buses[0].lat,
-      lng: buses[0].lng
+      lat: buses[0].lat || buses[0].location?.coordinates?.[1],
+      lng: buses[0].lng || buses[0].location?.coordinates?.[0]
     } : "No buses found");
 
     // CLEAN MAPPING - No fallbacks, direct field access only
     const formatted = buses.map(b => ({
       busId: b.busId,
-      lat: b.lat,
-      lng: b.lng,
-      updatedAt: b.updatedAt
+      lat: b.lat || b.location?.coordinates?.[1],
+      lng: b.lng || b.location?.coordinates?.[0],
+      updatedAt: b.lastUpdate || b.updatedAt
     }));
     
     // Filter out any documents with null/undefined lat or lng
@@ -507,8 +514,8 @@ async function getNearestSingleBus(req, res) {
     }
 
     // Fetch all bus locations from MongoDB
-    const buses = await BusLocation.find({})
-      .select("busId lat lng updatedAt timestamp")
+    const buses = await Bus.find({ status: "active" })
+      .select("busId lat lng location speed heading status lastUpdate")
       .lean();
 
     // Handle empty DB case

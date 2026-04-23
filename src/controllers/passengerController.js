@@ -1,4 +1,4 @@
-const Location = require("../models/Location");
+const Bus = require("../models/Bus");
 
 async function getNearbyBuses(req, res) {
   try {
@@ -12,7 +12,7 @@ async function getNearbyBuses(req, res) {
       return res.status(400).json({ message: "lat and lng query params are required" });
     }
 
-    const buses = await Location.find({
+    const buses = await Bus.find({
       location: {
         $near: {
           $geometry: {
@@ -22,8 +22,9 @@ async function getNearbyBuses(req, res) {
           $maxDistance: radiusMeters,
         },
       },
+      status: "active",
     })
-      .select("busId lat lng speed source updatedAt -_id")
+      .select("busId lat lng speed heading status lastUpdate -_id")
       .lean();
 
     return res.status(200).json({
