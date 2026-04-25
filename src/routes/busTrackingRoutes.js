@@ -104,20 +104,31 @@ router.get("/nearby", async (req, res) => {
       isLive: new Date(b.lastUpdate) >= liveThreshold
     }));
 
-    // Fetch recent SOS alerts (last 5 minutes)
+    // Fetch recent SOS alerts (last 5 minutes) - using createdAt (mongoose timestamps)
     const SOS_THRESHOLD_MS = 5 * 60 * 1000;
     const sosThreshold = new Date(now - SOS_THRESHOLD_MS);
+
+    // DEBUG: Get raw SOS data first (no filter)
+    const rawSOS = await DriverEmergency.find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean();
+    console.log("🚨 DEBUG RAW SOS:", rawSOS.length, "records");
+    if (rawSOS.length > 0) {
+      console.log("🚨 DEBUG FIRST SOS:", JSON.stringify(rawSOS[0], null, 2));
+    }
+
+    // Filter by createdAt (correct field from mongoose timestamps)
     const recentSOS = await DriverEmergency.find({
-      timestamp: { $gte: sosThreshold },
-      type: "breakdown"
-    }).select("busId timestamp location -_id").lean();
+      createdAt: { $gte: sosThreshold }
+    }).select("busId createdAt location -_id").lean();
 
     console.log("[DEBUG /buses/nearby] Found:", recentSOS.length, "SOS alerts");
 
-    // Format SOS data
+    // Format SOS data (use createdAt as timestamp)
     const formattedSOS = recentSOS.map(sos => ({
       busId: sos.busId,
-      timestamp: sos.timestamp,
+      timestamp: sos.createdAt,
       location: sos.location
     }));
 
