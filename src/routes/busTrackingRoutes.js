@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Bus = require("../models/Bus");
+const DriverEmergency = require("../models/DriverEmergency");
 
 /**
  * Bus Tracking Routes (Merged from bus-tracker-backend)
@@ -9,11 +10,32 @@ const Bus = require("../models/Bus");
  */
 
 /**
+ * GET /api/buses/debug/all
+ * DEBUG: List all buses in database (no filters)
+ */
+router.get("/debug/all", async (req, res) => {
+  try {
+    const buses = await Bus.find({}).select("busId lat lng status lastUpdate -_id").lean();
+    console.log("[DEBUG /buses/debug/all] Total buses:", buses.length);
+    buses.forEach((bus, i) => {
+      console.log(`[DEBUG] Bus ${i}:`, bus);
+    });
+    res.json({
+      count: buses.length,
+      buses: buses
+    });
+  } catch (error) {
+    console.error("[DEBUG /buses/debug/all] Error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
  * GET /api/buses/nearby
  * Query params:
  *   - lat: User latitude (required)
  *   - lng: User longitude (required)
- *   - radius: Search radius in meters (default: 5000)
+ *   - radius: Search radius in meters (default: 5000, max: 5000)
  *   - limit: Max results (default: 50, max: 100)
  *   - compact: Return compact field names (default: false)
  */
@@ -32,15 +54,27 @@ router.get("/nearby", async (req, res) => {
     const latitude = parseFloat(lat);
     const longitude = parseFloat(lng);
 
-    if (isNaN(latitude) || isNaN(longitude)) {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
       return res.status(400).json({
         error: "Invalid lat or lng: must be valid numbers",
       });
     }
 
-    const searchRadius = Math.min(parseInt(radius), 50000); // Max 50km
+    const searchRadius = Math.min(parseInt(radius), 5000); // Max 5km
+    const LIVE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes for isLive flag
     const resultLimit = Math.min(parseInt(limit), 100);
     const useCompact = compact === "true";
+
+    const now = Date.now();
+    const liveThreshold = new Date(now - LIVE_THRESHOLD_MS);
+
+    // DEBUG: Log query parameters
+    console.log("[DEBUG /buses/nearby] Query:", { 
+      lat: latitude, 
+      lng: longitude, 
+      radius: searchRadius,
+      liveThreshold: liveThreshold.toISOString()
+    });
 
     // Geospatial query
     const buses = await Bus.findNearby(
@@ -50,24 +84,67 @@ router.get("/nearby", async (req, res) => {
       resultLimit
     );
 
+    // DEBUG: Log results
+    console.log("[DEBUG /buses/nearby] Found:", buses.length, "buses");
+    if (buses.length > 0) {
+      buses.forEach((bus, i) => {
+        console.log(`[DEBUG /buses/nearby] Bus ${i}:`, {
+          busId: bus.busId,
+          lat: bus.lat,
+          lng: bus.lng,
+          status: bus.status,
+          lastUpdate: bus.lastUpdate
+        });
+      });
+    }
+
+    // Add isLive flag to each bus
+    const busesWithLiveFlag = buses.map((b) => ({
+      ...b,
+      isLive: new Date(b.lastUpdate) >= liveThreshold
+    }));
+
+    // Fetch recent SOS alerts (last 5 minutes)
+    const SOS_THRESHOLD_MS = 5 * 60 * 1000;
+    const sosThreshold = new Date(now - SOS_THRESHOLD_MS);
+    const recentSOS = await DriverEmergency.find({
+      timestamp: { $gte: sosThreshold },
+      type: "breakdown"
+    }).select("busId timestamp location -_id").lean();
+
+    console.log("[DEBUG /buses/nearby] Found:", recentSOS.length, "SOS alerts");
+
+    // Format SOS data
+    const formattedSOS = recentSOS.map(sos => ({
+      busId: sos.busId,
+      timestamp: sos.timestamp,
+      location: sos.location
+    }));
+
     // Format response
     const response = {
       meta: {
         query: { lat: latitude, lng: longitude, radius: searchRadius },
-        count: buses.length,
-        timestamp: Date.now(),
+        count: busesWithLiveFlag.length,
+        timestamp: now,
+        liveCount: busesWithLiveFlag.filter(b => b.isLive).length,
+        staleCount: busesWithLiveFlag.filter(b => !b.isLive).length,
+        message: busesWithLiveFlag.length === 0 ? "No active buses in your area" : undefined,
+        sosCount: formattedSOS.length,
       },
       buses: useCompact
-        ? buses.map((b) => ({
+        ? busesWithLiveFlag.map((b) => ({
             i: b.busId,
-            la: b.latitude || b.location?.coordinates?.[1],
-            ln: b.longitude || b.location?.coordinates?.[0],
+            la: b.lat || b.location?.coordinates?.[1],
+            ln: b.lng || b.location?.coordinates?.[0],
             s: b.speed || 0,
             h: b.heading || null,
             r: b.route || null,
             t: new Date(b.lastUpdate).getTime(),
+            live: b.isLive,  // Compact format: live flag
           }))
-        : buses,
+        : busesWithLiveFlag,
+      sos: formattedSOS,  // SOS data included
     };
 
     res.json(response);

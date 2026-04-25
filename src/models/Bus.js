@@ -155,7 +155,7 @@ busSchema.statics.findNearby = async function(lat, lng, radius, limit = 50) {
       }
     },
     status: 'active',
-    lastUpdate: { $gte: new Date(Date.now() - 5 * 60 * 1000) }
+    lastUpdate: { $gte: new Date(Date.now() - 5 * 60 * 1000) }  // 5 minute grace window
   })
   .limit(limit)
   .lean();
@@ -178,7 +178,7 @@ busSchema.statics.findInBounds = async function(north, south, east, west, limit 
       }
     },
     status: 'active',
-    lastUpdate: { $gte: new Date(Date.now() - 5 * 60 * 1000) }
+    lastUpdate: { $gte: new Date(Date.now() - 5 * 60 * 1000) }  // 5 minute grace window
   })
   .limit(limit)
   .lean();
