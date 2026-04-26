@@ -24,6 +24,7 @@ const driverEmergencySchema = new mongoose.Schema(
       },
     },
     status: { type: String, default: "active" },
+    acknowledged: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

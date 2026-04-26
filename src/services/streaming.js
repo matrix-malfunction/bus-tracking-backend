@@ -81,7 +81,7 @@ class BusStreamManager extends EventEmitter {
     if (!client) return;
 
     try {
-      const { lat, lng, radius = 5000 } = client.filters;
+      const { lat, lng, radius = 50000 } = client.filters; // Increased to 50km for testing
       
       const buses = await Bus.findNearby(
         parseFloat(lat),
@@ -135,33 +135,55 @@ class BusStreamManager extends EventEmitter {
             }
           },
           lastUpdate: {
-            $gte: new Date(now - 2 * 60 * 1000) // Updated in last 2 min
+            $gte: new Date(now - 5 * 60 * 1000) // Updated in last 5 min (relaxed)
           }
         })
         .select('busId location.coordinates speed heading route lastUpdate')
         .limit(100)
         .lean();
 
+        // Debug logging
+        console.log("[STREAM DEBUG] Area:", lat, lng, "Radius:", radius, "Found buses:", updatedBuses.length);
+        updatedBuses.forEach(bus => {
+          console.log("[STREAM DEBUG] Bus:", bus.busId, "lastUpdate:", bus.lastUpdate);
+        });
+
+        // TEMP: Send ALL buses without filtering to test pipeline
         // Send to each client in this group
         for (const clientId of clients) {
           const client = this.clients.get(clientId);
           if (!client) continue;
 
-          // Filter for changes since client's last update
-          const changes = updatedBuses.filter(bus => 
-            new Date(bus.lastUpdate) > client.lastUpdate
-          );
+          // TEMP TEST: Skip incremental filtering, send all
+          const changes = updatedBuses; // .filter(bus => 
+            // new Date(bus.lastUpdate) > client.lastUpdate
+          // );
 
-          if (changes.length > 0) {
-            client.onUpdate({
-              type: 'update',
-              timestamp: now,
-              count: changes.length,
-              buses: changes.map(b => compactBus(b))
-            });
-
-            client.lastUpdate = new Date();
+          // TEMP: Hardcode test bus if empty
+          let finalChanges = changes;
+          if (changes.length === 0) {
+            console.log("[STREAM DEBUG] No changes found, injecting test bus");
+            finalChanges = [{
+              busId: 'TEST001',
+              latitude: parseFloat(lat),
+              longitude: parseFloat(lng),
+              speed: 25,
+              eta: '5 min',
+              route: 'Test Route'
+            }];
           }
+
+          console.log("[STREAM EMIT] Client:", clientId, "Buses:", finalChanges.length);
+          console.log("[STREAM PAYLOAD]:", JSON.stringify(finalChanges[0]));
+
+          client.onUpdate({
+            type: 'update',
+            timestamp: now,
+            count: finalChanges.length,
+            buses: finalChanges.map(b => compactBus(b))
+          });
+
+          client.lastUpdate = new Date();
         }
 
       } catch (error) {

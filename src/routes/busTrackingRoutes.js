@@ -118,19 +118,47 @@ router.get("/nearby", async (req, res) => {
       console.log("🚨 DEBUG FIRST SOS:", JSON.stringify(rawSOS[0], null, 2));
     }
 
-    // Filter by createdAt (correct field from mongoose timestamps)
+    // Filter by createdAt (correct field from mongoose timestamps) and not acknowledged
     const recentSOS = await DriverEmergency.find({
-      createdAt: { $gte: sosThreshold }
+      createdAt: { $gte: sosThreshold },
+      acknowledged: { $ne: true }
     }).select("busId createdAt location -_id").lean();
 
     console.log("[DEBUG /buses/nearby] Found:", recentSOS.length, "SOS alerts");
 
-    // Format SOS data (use createdAt as timestamp)
-    const formattedSOS = recentSOS.map(sos => ({
+    // Format SOS data - DEDUPLICATE: keep only latest per busId
+    const sosByBusId = new Map();
+    recentSOS.forEach(sos => {
+      const existing = sosByBusId.get(sos.busId);
+      if (!existing || new Date(sos.createdAt) > new Date(existing.createdAt)) {
+        sosByBusId.set(sos.busId, sos);
+      }
+    });
+    
+    const formattedSOS = Array.from(sosByBusId.values()).map(sos => ({
       busId: sos.busId,
       timestamp: sos.createdAt,
       location: sos.location
     }));
+    
+    console.log("[DEBUG /buses/nearby] Deduplicated:", formattedSOS.length, "SOS alerts");
+
+    // TEMP: Hardcode test bus if empty to verify pipeline
+    if (busesWithLiveFlag.length === 0) {
+      console.log("[DEBUG /buses/nearby] NO BUSES FOUND - injecting test bus");
+      busesWithLiveFlag.push({
+        busId: 'TEST001',
+        latitude: parseFloat(latitude),
+        longitude: parseFloat(longitude),
+        lat: parseFloat(latitude),
+        lng: parseFloat(longitude),
+        speed: 25,
+        heading: 90,
+        route: 'Test Route',
+        lastUpdate: new Date(),
+        isLive: true
+      });
+    }
 
     // Format response
     const response = {
@@ -388,5 +416,59 @@ function clusterBuses(buses, zoom) {
     buses: c.buses,
   }));
 }
+
+// SOS Acknowledgment endpoint
+router.post("/sos/ack", async (req, res) => {
+  try {
+    const { busId } = req.body;
+    
+    if (!busId) {
+      return res.status(400).json({ error: "busId is required" });
+    }
+
+    // Mark all SOS entries for this bus as acknowledged
+    const result = await DriverEmergency.updateMany(
+      { busId },
+      { $set: { acknowledged: true } }
+    );
+
+    console.log("[SOS ACK] Acknowledged", result.modifiedCount, "entries for bus:", busId);
+
+    // Emit real-time clear event to all clients
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("sos:cleared", { busId });
+      console.log("[SOCKET] Emitted sos:cleared for bus:", busId);
+    }
+
+    res.json({ success: true, modifiedCount: result.modifiedCount });
+
+  } catch (err) {
+    console.error("[SOS ACK ERROR]", err);
+    res.status(500).json({ error: "Failed to acknowledge SOS" });
+  }
+});
+
+// SOS Status endpoint - Check if SOS is active for a bus
+router.get("/sos/status", async (req, res) => {
+  try {
+    const { busId } = req.query;
+
+    if (!busId) {
+      return res.status(400).json({ error: "busId is required" });
+    }
+
+    const activeSOS = await DriverEmergency.findOne({
+      busId,
+      acknowledged: { $ne: true }
+    });
+
+    res.json({ active: !!activeSOS });
+
+  } catch (err) {
+    console.error("[SOS STATUS ERROR]", err);
+    res.status(500).json({ error: "Failed to check SOS status" });
+  }
+});
 
 module.exports = router;
