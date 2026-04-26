@@ -116,10 +116,14 @@ exports.updateLocation = async (req, res) => {
       lngType: typeof req.body.lng
     });
 
-    const { busId, lat, lng, source } = req.body;
+    const { busId, source } = req.body;
+    
+    // Handle both lat/lng and latitude/longitude property names
+    const lat = req.body.lat ?? req.body.latitude;
+    const lng = req.body.lng ?? req.body.longitude;
 
     if (!busId || lat == null || lng == null) {
-      console.log("❌ Missing fields:", { busId, lat, lng });
+      console.log("❌ Missing fields:", { busId, lat, lng, body: req.body });
       return res.status(400).json({ error: "Missing fields" });
     }
 
@@ -160,8 +164,9 @@ exports.updateLocation = async (req, res) => {
 
     console.log("✅ SAVED TO DB (Bus model):", {
       busId: updated.busId,
-      lat: updated.lat,
-      lng: updated.lng
+      lat: numLat,
+      lng: numLng,
+      location: updated.location
     });
     const io = req.app.get("io");
 
