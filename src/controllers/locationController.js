@@ -3,6 +3,33 @@ const Route = require("../models/Route");
 const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
+const { isTrackingActive, setTrackingActive } = require("../utils/trackingState");
+
+// Helper: Check if SOS is active for bus
+const checkSOS = async (busId) => {
+  const FIVE_MINUTES = 5 * 60 * 1000;
+  const now = Date.now();
+  
+  const sos = await DriverEmergency.findOne({
+    busId,
+    $and: [
+      {
+        $or: [
+          { status: { $in: ["active", "sos", "SOS"] } },
+          { type: "emergency" }
+        ]
+      },
+      {
+        $or: [
+          { lastUpdate: { $gte: new Date(now - FIVE_MINUTES) } },
+          { createdAt: { $gte: new Date(now - FIVE_MINUTES) } }
+        ]
+      }
+    ]
+  });
+  
+  return !!sos;
+};
 const { chooseBestSource } = require("../services/hybridSourceSelector");
 const { haversineKm } = require("../services/etaService");
 const { defaultCache } = require("../services/locationCache");
@@ -118,6 +145,19 @@ async function updateLocation(req, res) {
     });
 
     const { busId, source } = req.body;
+    
+    // BACKEND AUTHORITY: Check tracking state
+    if (!isTrackingActive(busId)) {
+      console.log("[BACKEND] BLOCKED - tracking inactive:", busId);
+      return res.status(403).json({ error: "Tracking not active" });
+    }
+    
+    // BACKEND AUTHORITY: Check SOS status
+    const sosActive = await checkSOS(busId);
+    if (sosActive) {
+      console.log("[BACKEND] BLOCKED - SOS active:", busId);
+      return res.status(403).json({ error: "SOS active - tracking paused" });
+    }
     
     // Handle both lat/lng and latitude/longitude property names
     const lat = req.body.lat ?? req.body.latitude;
@@ -571,7 +611,9 @@ async function getNearestSingleBus(req, res) {
 
 async function getAllBusLocations(req, res) {
   try {
-    const buses = await Bus.find({});
+    // Only return buses that are currently tracking (active in backend authority)
+    const allBuses = await Bus.find({});
+    const buses = allBuses.filter(b => isTrackingActive(b.busId));
 
     const formatted = buses.map(b => ({
       _id: b._id,
@@ -587,9 +629,42 @@ async function getAllBusLocations(req, res) {
   }
 }
 
+// Controller to start tracking for a bus
+const startTracking = async (req, res) => {
+  try {
+    const { busId } = req.body;
+    if (!busId) {
+      return res.status(400).json({ error: "busId required" });
+    }
+    setTrackingActive(busId, true);
+    return res.json({ success: true, message: "Tracking started", busId });
+  } catch (err) {
+    console.error("[START TRACKING ERROR]", err);
+    return res.status(500).json({ error: "Failed to start tracking" });
+  }
+};
+
+// Controller to stop tracking for a bus
+const stopTracking = async (req, res) => {
+  try {
+    const { busId } = req.body;
+    if (!busId) {
+      return res.status(400).json({ error: "busId required" });
+    }
+    const io = req.app.get("io");
+    setTrackingActive(busId, false, io);
+    return res.json({ success: true, message: "Tracking stopped", busId });
+  } catch (err) {
+    console.error("[STOP TRACKING ERROR]", err);
+    return res.status(500).json({ error: "Failed to stop tracking" });
+  }
+};
+
 module.exports = {
   updateLocation,
   getAllBusLocations,
   getNearestStopHandler,
-  getNearestSingleBus
+  getNearestSingleBus,
+  startTracking,
+  stopTracking
 };

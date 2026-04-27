@@ -1,5 +1,6 @@
 const DriverEmergency = require("../models/DriverEmergency");
 const Bus = require("../models/Bus");
+const { setTrackingActive } = require("../utils/trackingState");
 
 async function reportDriverEmergency(req, res) {
   try {
@@ -61,7 +62,10 @@ async function triggerSos(req, res) {
       timestamp: new Date(),
     });
 
+    // Disable tracking for this bus when SOS is triggered
     const io = req.app.get("io");
+    setTrackingActive(busId, false, io);
+    console.log("[SOS] Tracking disabled for bus:", busId);
 
     if (io) {
       io.emit("sosAlert", {

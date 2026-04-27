@@ -10,6 +10,9 @@ const router = express.Router();
 const FIVE_MINUTES = 5 * 60 * 1000;
 const now = Date.now();
 
+// POST /api/sos - Create SOS (tracking disabled inside controller)
+router.post("/", triggerSos);
+
 // GET /api/sos/status - Safe endpoint for driver SOS checks
 router.get("/status", async (req, res) => {
   try {
@@ -26,15 +29,22 @@ router.get("/status", async (req, res) => {
     
     // Filter active SOS at DB level with TTL (activity-based, prevent stale/ghost SOS)
     // Tolerant query: accepts lastUpdate OR createdAt as activity proof
+    // Wrapped in $and to prevent duplicate $or key overwrite
     const sos = await DriverEmergency.findOne({
       busId,
-      $or: [
-        { status: { $in: ["active", "sos", "SOS"] } },
-        { type: "emergency" }
-      ],
-      $or: [
-        { lastUpdate: { $gte: new Date(now - FIVE_MINUTES) } },
-        { createdAt: { $gte: new Date(now - FIVE_MINUTES) } }
+      $and: [
+        {
+          $or: [
+            { status: { $in: ["active", "sos", "SOS"] } },
+            { type: "emergency" }
+          ]
+        },
+        {
+          $or: [
+            { lastUpdate: { $gte: new Date(now - FIVE_MINUTES) } },
+            { createdAt: { $gte: new Date(now - FIVE_MINUTES) } }
+          ]
+        }
       ]
     }).sort({ createdAt: -1, _id: -1 });
 

@@ -5,11 +5,15 @@ const {
   updateLocation,
   getAllBusLocations,
   getNearestStopHandler,
-  getNearestSingleBus
+  getNearestSingleBus,
+  startTracking,
+  stopTracking
 } = require("../controllers/locationController");
 
-// POST route
+// POST routes
 router.post("/update", updateLocation);
+router.post("/start", startTracking);
+router.post("/stop", stopTracking);
 
 // GET routes
 router.get("/all", getAllBusLocations);
