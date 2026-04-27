@@ -2,6 +2,7 @@ const Bus = require("../models/Bus");
 const Route = require("../models/Route");
 const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
+const DriverEmergency = require("../models/DriverEmergency");
 const { chooseBestSource } = require("../services/hybridSourceSelector");
 const { haversineKm } = require("../services/etaService");
 const { defaultCache } = require("../services/locationCache");
@@ -168,6 +169,23 @@ exports.updateLocation = async (req, res) => {
       lng: numLng,
       location: updated.location
     });
+    // Sync SOS lastUpdate with driver activity (update ONLY latest record)
+    await DriverEmergency.findOneAndUpdate(
+      {
+        busId: req.body.busId,
+        $or: [
+          { status: { $in: ["active", "sos", "SOS"] } },
+          { type: "emergency" }
+        ]
+      },
+      {
+        $set: { lastUpdate: new Date() }
+      },
+      {
+        sort: { createdAt: -1, _id: -1 }   // stable event ordering
+      }
+    );
+
     const io = req.app.get("io");
 
     if (io) {
@@ -458,19 +476,12 @@ async function getNearestStopHandler(req, res) {
     });
   } catch (error) {
     return res.status(500).json({ message: "Failed to fetch nearest-stop buses" });
-  }
-}
-
-exports.getAllBusLocations = async (req, res) => {
   try {
-    const buses = await Bus.find({ status: "active" });
-    console.log("STEP 3 - Raw DB data count:", buses.length);
-    console.log("STEP 3 - First raw doc:", buses[0] ? {
-      busId: buses[0].busId,
-      lat: buses[0].lat || buses[0].location?.coordinates?.[1],
-      lng: buses[0].lng || buses[0].location?.coordinates?.[0]
-    } : "No buses found");
+    // ... (rest of the code remains the same)
 
+    const bus = await Bus.findByIdAndUpdate(busId, update, {
+      new: true,
+      runValidators: true,
     // CLEAN MAPPING - No fallbacks, direct field access only
     const formatted = buses.map(b => ({
       busId: b.busId,

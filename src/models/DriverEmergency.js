@@ -31,4 +31,7 @@ const driverEmergencySchema = new mongoose.Schema(
 
 driverEmergencySchema.index({ driverId: 1, createdAt: -1 });
 
+// Compound index for SOS query optimization (busId + lastUpdate TTL + createdAt sort)
+driverEmergencySchema.index({ busId: 1, lastUpdate: -1, createdAt: -1 });
+
 module.exports = mongoose.model("DriverEmergency", driverEmergencySchema);
