@@ -106,7 +106,7 @@ async function getNextStop(busLat, busLng, route) {
   return { stop: nextStop, distance: minDist };
 }
 
-exports.updateLocation = async (req, res) => {
+async function updateLocation(req, res) {
   try {
     console.log("📥 RAW BODY:", req.body);
     console.log("STEP 1 - Incoming lat/lng:", { 
@@ -476,41 +476,6 @@ async function getNearestStopHandler(req, res) {
     });
   } catch (error) {
     return res.status(500).json({ message: "Failed to fetch nearest-stop buses" });
-  try {
-    // ... (rest of the code remains the same)
-
-    const bus = await Bus.findByIdAndUpdate(busId, update, {
-      new: true,
-      runValidators: true,
-    // CLEAN MAPPING - No fallbacks, direct field access only
-    const formatted = buses.map(b => ({
-      busId: b.busId,
-      lat: b.lat || b.location?.coordinates?.[1],
-      lng: b.lng || b.location?.coordinates?.[0],
-      updatedAt: b.lastUpdate || b.updatedAt
-    }));
-    
-    // Filter out any documents with null/undefined lat or lng
-    const validOnly = formatted.filter(b => 
-      Number.isFinite(b.lat) && Number.isFinite(b.lng)
-    );
-    
-    if (validOnly.length !== formatted.length) {
-      console.log(`⚠️ Filtered ${formatted.length - validOnly.length} buses with invalid lat/lng`);
-    }
-
-    console.log("STEP 4 - Mapped response count:", validOnly.length);
-    console.log("STEP 4 - First mapped doc:", validOnly[0] ? {
-      busId: validOnly[0].busId,
-      lat: validOnly[0].lat,
-      lng: validOnly[0].lng
-    } : "No valid buses");
-
-    // Clean response - only valid buses with lat/lng
-    res.json(validOnly);
-  } catch (err) {
-    console.error("❌ getAllBusLocations error:", err);
-    res.status(500).json({ error: "Failed to fetch buses" });
   }
 };
 
@@ -604,9 +569,27 @@ async function getNearestSingleBus(req, res) {
   }
 }
 
+async function getAllBusLocations(req, res) {
+  try {
+    const buses = await Bus.find({});
+
+    const formatted = buses.map(b => ({
+      _id: b._id,
+      lat: b.lat || b.location?.coordinates?.[1],
+      lng: b.lng || b.location?.coordinates?.[0],
+      status: b.status || "normal"
+    }));
+
+    return res.json(formatted);
+  } catch (err) {
+    console.error("[getAllBusLocations]", err);
+    return res.status(500).json({ error: "Failed to fetch buses" });
+  }
+}
+
 module.exports = {
-  updateLocation: exports.updateLocation,
-  getAllBusLocations: exports.getAllBusLocations,
-  getNearestStop: getNearestStopHandler,
-  getNearestSingleBus: getNearestSingleBus,
+  updateLocation,
+  getAllBusLocations,
+  getNearestStopHandler,
+  getNearestSingleBus
 };

@@ -4,6 +4,7 @@ const router = express.Router();
 const {
   updateLocation,
   getAllBusLocations,
+  getNearestStopHandler,
   getNearestSingleBus
 } = require("../controllers/locationController");
 
@@ -12,6 +13,7 @@ router.post("/update", updateLocation);
 
 // GET routes
 router.get("/all", getAllBusLocations);
-router.get("/nearest-stop", getNearestSingleBus);
+router.get("/nearest-stop", getNearestStopHandler);
+router.get("/nearest-single", getNearestSingleBus);
 
 module.exports = router;
