@@ -8,6 +8,7 @@ const router = express.Router();
 
 // TTL for SOS auto-expiry (5 minutes)
 const FIVE_MINUTES = 5 * 60 * 1000;
+const now = Date.now();
 
 // GET /api/sos/status - Safe endpoint for driver SOS checks
 router.get("/status", async (req, res) => {
@@ -24,14 +25,18 @@ router.get("/status", async (req, res) => {
     }
     
     // Filter active SOS at DB level with TTL (activity-based, prevent stale/ghost SOS)
+    // Tolerant query: accepts lastUpdate OR createdAt as activity proof
     const sos = await DriverEmergency.findOne({
       busId,
       $or: [
         { status: { $in: ["active", "sos", "SOS"] } },
         { type: "emergency" }
       ],
-      lastUpdate: { $gte: new Date(Date.now() - FIVE_MINUTES) }
-    }).sort({ lastUpdate: -1 });
+      $or: [
+        { lastUpdate: { $gte: new Date(now - FIVE_MINUTES) } },
+        { createdAt: { $gte: new Date(now - FIVE_MINUTES) } }
+      ]
+    }).sort({ createdAt: -1, _id: -1 });
 
     let isActive = false;
 
@@ -46,8 +51,8 @@ router.get("/status", async (req, res) => {
     }
 
     return res.json({
-      active: isActive,
-      sos: isActive ? sos : null
+      active: !!sos,
+      sos: sos || null
     });
   } catch (err) {
     console.error("[SOS STATUS ERROR]", err.message);
