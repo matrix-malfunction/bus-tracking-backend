@@ -1,3 +1,5 @@
+console.log("[APP] app.js loaded");
+
 const express = require("express");
 const cors = require("cors");
 const healthRoutes = require("./routes/healthRoutes");
@@ -53,5 +55,8 @@ app.use("/api/passenger/sos", passengerSosRoutes);
 app.use("/api/passenger", passengerRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/buses", busTrackingRoutes);
+
+// Debug endpoint to verify latest code is running
+app.get("/_health/routes", (req, res) => res.json({ ok: true, timestamp: Date.now() }));
 
 module.exports = app;
