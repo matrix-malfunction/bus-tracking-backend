@@ -6,6 +6,7 @@ const app = require("./app");
 const locationRoutes = require("./routes/locationRoutes");
 const { connectDB } = require("./config/db");
 const { registerSocketHandlers } = require("./sockets");
+const Bus = require("./models/Bus");
 
 dotenv.config();
 app.use("/location", locationRoutes);
@@ -28,6 +29,16 @@ io.on("connection", (socket) => {
 async function startServer() {
   try {
     await connectDB(process.env.MONGODB_URI);
+
+    // Start stale bus cleanup scheduler
+    setInterval(async () => {
+      try {
+        await Bus.markStaleBusesInactive();
+      } catch (err) {
+        console.error("[BACKEND] Stale cleanup failed:", err.message);
+      }
+    }, 60000);
+    console.log("[BACKEND] Stale bus cleanup scheduler started (60s interval)");
 
     server.listen(port, "0.0.0.0", () => {
       console.log(`Server listening on port ${port}`);

@@ -83,18 +83,28 @@ class BusStreamManager extends EventEmitter {
     try {
       const { lat, lng, radius = 50000 } = client.filters; // Increased to 50km for testing
       
+      // Stage 2: Backend Streaming - Query LIVE buses
       const buses = await Bus.findNearby(
         parseFloat(lat),
         parseFloat(lng),
         parseInt(radius),
         50
       );
+      
+      const normalizedBuses = buses
+        .map(b => compactBus(b))
+        .filter(b => b !== null);
+      
+      if (normalizedBuses.length > 0) {
+        console.log(`[BACKEND] Emitting ${normalizedBuses.length} LIVE buses:`, 
+          normalizedBuses.map(b => ({ _id: b._id, lat: b.lat, lng: b.lng, status: b.status })));
+      }
 
       client.onUpdate({
-        type: 'init',
+        type: 'BUS_DATA',
         timestamp: Date.now(),
-        count: buses.length,
-        buses: buses.map(b => compactBus(b))
+        count: normalizedBuses.length,
+        buses: normalizedBuses
       });
 
       client.lastUpdate = new Date();
@@ -169,7 +179,8 @@ class BusStreamManager extends EventEmitter {
               longitude: parseFloat(lng),
               speed: 25,
               eta: '5 min',
-              route: 'Test Route'
+              route: 'Test Route',
+              status: 'active'
             }];
           }
 
@@ -249,14 +260,47 @@ function createStream(clientId, filters, onUpdate) {
  * Compact bus data for minimal payload
  */
 function compactBus(bus) {
+  // Normalize and validate status
+  const status = String(bus.status || "").toLowerCase();
+  if (status !== "active" && status !== "sos") return null;
+  
+  // Safety: reject if _id missing
+  const id = bus._id;
+  if (!id) {
+    console.warn("[BACKEND] Dropped bus: missing _id");
+    return null;
+  }
+  
+  // Safety: validate location object
+  const location = bus.location;
+  if (
+    !location ||
+    typeof location !== "object" ||
+    !Array.isArray(location.coordinates) ||
+    location.coordinates.length < 2
+  ) {
+    console.warn("[BACKEND] Dropped bus: invalid location");
+    return null;
+  }
+  
+  const lng = location.coordinates[0];
+  const lat = location.coordinates[1];
+  
+  // Safety: reject if coords invalid
+  if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
+    console.warn("[BACKEND] Dropped bus: invalid coords");
+    return null;
+  }
+  
   return {
-    i: bus.busId,
-    la: bus.location.coordinates[1],
-    ln: bus.location.coordinates[0],
-    s: bus.speed || 0,
-    h: bus.heading || null,
-    r: bus.route || null,
-    t: new Date(bus.lastUpdate).getTime()
+    _id: String(id),
+    lat: lat,
+    lng: lng,
+    status: status,
+    speed: bus.speed || 0,
+    heading: bus.heading || null,
+    route: bus.route || null,
+    lastUpdate: new Date(bus.lastUpdate).getTime()
   };
 }
 
@@ -293,6 +337,7 @@ async function setupChangeStream() {
       {
         $match: {
           'fullDocument.status': 'active',
+          'fullDocument.location.coordinates': { $exists: true, $type: 'array' },
           operationType: { $in: ['insert', 'update', 'replace'] }
         }
       }

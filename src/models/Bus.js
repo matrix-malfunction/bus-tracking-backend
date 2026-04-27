@@ -125,7 +125,7 @@ busSchema.pre('save', function(next) {
 });
 
 // Static methods
-busSchema.statics.updateLocation = async function(busId, lat, lng, speed, heading) {
+busSchema.statics.updateLocation = async function(busId, lat, lng, speed, heading, status) {
   return this.findOneAndUpdate(
     { busId },
     {
@@ -136,6 +136,7 @@ busSchema.statics.updateLocation = async function(busId, lat, lng, speed, headin
         },
         speed,
         heading,
+        status: status || 'active',
         lastUpdate: new Date()
       }
     },
@@ -144,6 +145,9 @@ busSchema.statics.updateLocation = async function(busId, lat, lng, speed, headin
 };
 
 busSchema.statics.findNearby = async function(lat, lng, radius, limit = 50) {
+  const FIVE_MINUTES = 5 * 60 * 1000;
+  const now = Date.now();
+  
   return this.find({
     location: {
       $near: {
@@ -154,14 +158,17 @@ busSchema.statics.findNearby = async function(lat, lng, radius, limit = 50) {
         $maxDistance: radius
       }
     },
-    status: 'active',
-    lastUpdate: { $gte: new Date(Date.now() - 5 * 60 * 1000) }  // 5 minute grace window
+    status: { $in: ['active', 'sos'] },
+    lastUpdate: { $gte: new Date(now - FIVE_MINUTES) }
   })
   .limit(limit)
   .lean();
 };
 
 busSchema.statics.findInBounds = async function(north, south, east, west, limit = 100) {
+  const FIVE_MINUTES = 5 * 60 * 1000;
+  const now = Date.now();
+  
   return this.find({
     location: {
       $geoWithin: {
@@ -177,11 +184,27 @@ busSchema.statics.findInBounds = async function(north, south, east, west, limit 
         }
       }
     },
-    status: 'active',
-    lastUpdate: { $gte: new Date(Date.now() - 5 * 60 * 1000) }  // 5 minute grace window
+    status: { $in: ['active', 'sos'] },
+    lastUpdate: { $gte: new Date(now - FIVE_MINUTES) }
   })
   .limit(limit)
   .lean();
+};
+
+// Driver failsafe: Mark stale buses as inactive
+busSchema.statics.markStaleBusesInactive = async function() {
+  const FIVE_MINUTES = 5 * 60 * 1000;
+  const result = await this.updateMany(
+    {
+      status: { $in: ['active', 'sos'] },
+      lastUpdate: { $lt: new Date(Date.now() - FIVE_MINUTES) }
+    },
+    { $set: { status: 'inactive' } }
+  );
+  if (result.modifiedCount > 0) {
+    console.log(`[BACKEND] Marked ${result.modifiedCount} stale buses as inactive`);
+  }
+  return result;
 };
 
 // Instance methods
@@ -193,7 +216,8 @@ busSchema.methods.toCompactJSON = function() {
     s: this.speed,
     h: this.heading,
     r: this.route,
-    t: this.lastUpdate.getTime()
+    t: this.lastUpdate.getTime(),
+    st: this.status  // status: active, SOS, etc.
   };
 };
 

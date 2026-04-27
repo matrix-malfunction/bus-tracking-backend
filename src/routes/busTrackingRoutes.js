@@ -4,6 +4,22 @@ const Bus = require("../models/Bus");
 const DriverEmergency = require("../models/DriverEmergency");
 
 /**
+ * SOS Auto-Expire: Mark SOS buses as inactive if no update for 60 seconds
+ */
+async function expireStaleSOS() {
+  const SOS_EXPIRE_MS = 60 * 1000; // 60 seconds
+  const cutoff = new Date(Date.now() - SOS_EXPIRE_MS);
+  
+  await Bus.updateMany(
+    { 
+      status: 'SOS',
+      lastUpdate: { $lt: cutoff }
+    },
+    { $set: { status: 'inactive' } }
+  );
+}
+
+/**
  * Bus Tracking Routes (Merged from bus-tracker-backend)
  * Provides geospatial queries and real-time streaming
  * Mount at: /api/buses
@@ -41,6 +57,9 @@ router.get("/debug/all", async (req, res) => {
  */
 router.get("/nearby", async (req, res) => {
   try {
+    // Auto-expire stale SOS before querying
+    await expireStaleSOS();
+    
     const { lat, lng, radius = 5000, limit = 50, compact = "false" } =
       req.query;
 
@@ -156,7 +175,8 @@ router.get("/nearby", async (req, res) => {
         heading: 90,
         route: 'Test Route',
         lastUpdate: new Date(),
-        isLive: true
+        isLive: true,
+        status: 'active'
       });
     }
 
@@ -180,9 +200,13 @@ router.get("/nearby", async (req, res) => {
             h: b.heading || null,
             r: b.route || null,
             t: new Date(b.lastUpdate).getTime(),
-            live: b.isLive,  // Compact format: live flag
+            live: b.isLive,
+            st: b.status,  // status: active, SOS, etc.
           }))
-        : busesWithLiveFlag,
+        : busesWithLiveFlag.map((b) => ({
+            ...b,
+            isLive: b.isLive,  // Add computed live flag
+          })),
       sos: formattedSOS,  // SOS data included
     };
 
@@ -202,7 +226,10 @@ router.get("/nearby", async (req, res) => {
  */
 router.get("/bounds", async (req, res) => {
   try {
-    const { north, south, east, west, limit = 100, zoom = 12 } = req.query;
+    // Auto-expire stale SOS before querying
+    await expireStaleSOS();
+    
+    const { north, south, east, west, zoom = 12, limit = 100 } = req.query;
 
     if (!north || !south || !east || !west) {
       return res.status(400).json({
@@ -258,6 +285,9 @@ router.get("/bounds", async (req, res) => {
  */
 router.get("/stream", async (req, res) => {
   try {
+    // Auto-expire stale SOS before querying
+    await expireStaleSOS();
+    
     const { lat, lng, radius = 5000 } = req.query;
 
     if (!lat || !lng) {
@@ -291,6 +321,7 @@ router.get("/stream", async (req, res) => {
           h: b.heading || null,
           r: b.route || null,
           t: new Date(b.lastUpdate).getTime(),
+          st: b.status
         })),
       })}\n\n`
     );
