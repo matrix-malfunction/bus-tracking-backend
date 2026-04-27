@@ -95,10 +95,7 @@ class BusStreamManager extends EventEmitter {
         .map(b => compactBus(b))
         .filter(b => b !== null);
       
-      if (normalizedBuses.length > 0) {
-        console.log(`[BACKEND] Emitting ${normalizedBuses.length} LIVE buses:`, 
-          normalizedBuses.map(b => ({ _id: b._id, lat: b.lat, lng: b.lng, status: b.status })));
-      }
+      console.log("[BACKEND] Emitting buses:", normalizedBuses.length);
 
       client.onUpdate({
         type: 'BUS_DATA',
