@@ -111,20 +111,128 @@ async function getNextStop(busLat, busLng, route) {
 async function updateLocation(req, res) {
   // Log immediately upon entry - confirms controller is reached
   console.log("[BACKEND] ========== LOCATION UPDATE ==========");
-  console.log("[BACKEND] Controller reached - req.body:", JSON.stringify(req.body, null, 2));
+  console.log("[BACKEND] req.body:", JSON.stringify(req.body, null, 2));
   console.log("[BACKEND] req.path:", req.path);
   console.log("[BACKEND] req.method:", req.method);
   
   try {
-    // Check if io exists
     const io = req.app.get("io");
     console.log("[BACKEND] io exists:", !!io);
     
+    const { busId, source } = req.body;
+    const lat = req.body.lat ?? req.body.latitude;
+    const lng = req.body.lng ?? req.body.longitude;
+    
+    console.log("[BACKEND] Parsed values:", { busId, lat, lng, source });
+    
+    // === INPUT VALIDATION ===
+    const missingFields = [];
+    if (!busId) missingFields.push("busId");
+    if (lat == null) missingFields.push("latitude/lat");
+    if (lng == null) missingFields.push("longitude/lng");
+    
+    if (missingFields.length > 0) {
+      console.log("[BACKEND] ❌ MISSING FIELDS:", missingFields);
+      return res.status(400).json({ 
+        error: "Missing required fields", 
+        missing: missingFields,
+        received: Object.keys(req.body)
+      });
+    }
+    
+    // === TRACKING STATE AUTO-INIT ===
+    let state = trackingState.get(busId);
+    console.log("[BACKEND] trackingState exists:", !!state);
+    
+    if (!state) {
+      console.log("[BACKEND] Auto-initializing tracking state for:", busId);
+      state = {
+        trackingActive: true,
+        sos: false,
+        lastUpdate: Date.now(),
+        location: null
+      };
+      trackingState.set(busId, state);
+    }
+    
+    // Block only if explicitly stopped
+    if (state?.trackingActive === false) {
+      console.log("[BACKEND] ❌ BLOCKED - tracking stopped:", busId);
+      return res.status(403).json({ error: "Tracking not active" });
+    }
+    
+    // === STRICT VALIDATION ===
+    const numLat = Number(lat);
+    const numLng = Number(lng);
+    
+    if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) {
+      console.log("[BACKEND] ❌ Invalid lat/lng:", { lat, lng, numLat, numLng });
+      return res.status(400).json({ error: "Invalid lat/lng values" });
+    }
+    
+    if (numLat < -90 || numLat > 90 || numLng < -180 || numLng > 180) {
+      console.log("[BACKEND] ❌ Out of range lat/lng:", { numLat, numLng });
+      return res.status(400).json({ error: "Lat/lng out of valid range" });
+    }
+    
+    // === UPDATE DATABASE ===
+    const updated = await Bus.findOneAndUpdate(
+      { busId: busId.trim() },
+      {
+        $set: {
+          busId: busId.trim(),
+          location: {
+            type: "Point",
+            coordinates: [numLng, numLat],
+          },
+          lat: numLat,
+          lng: numLng,
+          speed: req.body.speed || 0,
+          heading: req.body.heading || 0,
+          status: "active",
+          lastUpdate: new Date(),
+        },
+      },
+      { upsert: true, new: true }
+    );
+    
+    console.log("[BACKEND] ✅ Saved to DB:", {
+      busId: updated.busId,
+      lat: numLat,
+      lng: numLng
+    });
+    
+    // === SOCKET EMIT ===
+    if (io && busId && Number.isFinite(numLat) && Number.isFinite(numLng)) {
+      const emitPayload = {
+        busId: busId.trim(),
+        latitude: numLat,
+        longitude: numLng,
+      };
+      console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", emitPayload);
+      
+      io.emit("BUS_LOCATION_UPDATE", emitPayload);
+      console.log("[BACKEND] ✅ Socket event emitted");
+    } else {
+      console.log("[BACKEND] ⚠️ Socket emit skipped - invalid data");
+    }
+    
+    // === UPDATE TRACKING STATE ===
+    if (state && busId) {
+      trackingState.set(busId, {
+        ...state,
+        lastUpdate: Date.now(),
+        location: { latitude: numLat, longitude: numLng }
+      });
+      console.log("[BACKEND] ✅ State updated with location for:", busId);
+    }
+    
     return res.json({ 
       success: true, 
-      message: "Controller reached - 403 should not happen",
+      data: updated,
       timestamp: Date.now()
     });
+    
   } catch (err) {
     console.error("🔥 BACKEND ERROR ==========");
     console.error("Message:", err.message);
