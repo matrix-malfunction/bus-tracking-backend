@@ -3,33 +3,8 @@ const Route = require("../models/Route");
 const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
-const { isTrackingActive, setTrackingActive } = require("../utils/trackingState");
+const { isTrackingActive, setTrackingActive, getTrackingState, trackingState } = require("../utils/trackingState");
 
-// Helper: Check if SOS is active for bus
-const checkSOS = async (busId) => {
-  const FIVE_MINUTES = 5 * 60 * 1000;
-  const now = Date.now();
-  
-  const sos = await DriverEmergency.findOne({
-    busId,
-    $and: [
-      {
-        $or: [
-          { status: { $in: ["active", "sos", "SOS"] } },
-          { type: "emergency" }
-        ]
-      },
-      {
-        $or: [
-          { lastUpdate: { $gte: new Date(now - FIVE_MINUTES) } },
-          { createdAt: { $gte: new Date(now - FIVE_MINUTES) } }
-        ]
-      }
-    ]
-  });
-  
-  return !!sos;
-};
 const { chooseBestSource } = require("../services/hybridSourceSelector");
 const { haversineKm } = require("../services/etaService");
 const { defaultCache } = require("../services/locationCache");
@@ -147,16 +122,30 @@ async function updateLocation(req, res) {
     const { busId, source } = req.body;
     
     // BACKEND AUTHORITY: Check tracking state
-    if (!isTrackingActive(busId)) {
-      console.log("[BACKEND] BLOCKED - tracking inactive:", busId);
+    // Use raw Map access to detect truly missing state (vs stopped state)
+    const rawState = trackingState.get(busId);
+    console.log("[BACKEND] Raw tracking state:", rawState);
+
+    // Auto-activate ONLY if state missing (server restart), NOT if stopped
+    if (!rawState) {
+      console.log("[BACKEND] State missing (restart?), auto-activating:", busId);
+      setTrackingActive(busId, true);
+    }
+
+    const state = getTrackingState(busId);
+    console.log("[BACKEND] Tracking state:", state);
+
+    // Block ONLY if tracking explicitly stopped (active === false)
+    // Allow updates during SOS - tracking continues for real-time visibility
+    if (state?.active === false) {
+      console.log("[BACKEND] BLOCKED - tracking stopped:", busId);
       return res.status(403).json({ error: "Tracking not active" });
     }
-    
-    // BACKEND AUTHORITY: Check SOS status
-    const sosActive = await checkSOS(busId);
+
+    // Log SOS status but DO NOT block - tracking continues during emergency
+    const sosActive = state?.sos === true;
     if (sosActive) {
-      console.log("[BACKEND] BLOCKED - SOS active:", busId);
-      return res.status(403).json({ error: "SOS active - tracking paused" });
+      console.log("[BACKEND] SOS active but tracking continues:", busId);
     }
     
     // Handle both lat/lng and latitude/longitude property names
@@ -226,8 +215,6 @@ async function updateLocation(req, res) {
       }
     );
 
-    const io = req.app.get("io");
-
     if (io) {
       io.emit("busLocationUpdate", {
         busId,
@@ -256,6 +243,16 @@ async function updateLocation(req, res) {
 
         console.log("🕒 ETA EMITTED:", next.stop.name, etaMinutes);
       }
+    }
+
+    // Refresh TTL timestamp to keep active drivers from expiring
+    // Use immutable update with spread operator
+    if (state) {
+      trackingState.set(busId, {
+        ...state,
+        updatedAt: Date.now()
+      });
+      console.log("[BACKEND] Refreshed TTL for:", busId);
     }
 
     return res.json({ success: true, data: updated });

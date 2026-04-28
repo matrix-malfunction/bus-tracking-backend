@@ -9,6 +9,7 @@ const locationRoutes = require("./routes/locationRoutes");
 const { connectDB } = require("./config/db");
 const { registerSocketHandlers } = require("./sockets");
 const Bus = require("./models/Bus");
+const { cleanupStaleState } = require("./utils/trackingState");
 
 dotenv.config();
 app.use("/location", locationRoutes);
@@ -41,6 +42,19 @@ async function startServer() {
       }
     }, 60000);
     console.log("[BACKEND] Stale bus cleanup scheduler started (60s interval)");
+
+    // Start tracking state TTL cleanup (15s interval) - removes ghost buses
+    setInterval(() => {
+      try {
+        const cleaned = cleanupStaleState(io);
+        if (cleaned.length > 0) {
+          console.log("[BACKEND] TTL cleanup - removed buses:", cleaned);
+        }
+      } catch (err) {
+        console.error("[BACKEND] TTL cleanup failed:", err.message);
+      }
+    }, 15000);
+    console.log("[BACKEND] Tracking state TTL cleanup started (15s interval)");
 
     server.listen(port, "0.0.0.0", () => {
       console.log(`Server listening on port ${port}`);
