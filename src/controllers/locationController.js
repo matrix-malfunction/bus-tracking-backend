@@ -119,42 +119,62 @@ async function updateLocation(req, res) {
       lngType: typeof req.body.lng
     });
 
-    const { busId, source } = req.body;
+    // === COMPREHENSIVE LOGGING ===
+    console.log("[BACKEND] ========== LOCATION UPDATE ==========");
+    console.log("[BACKEND] req.body:", JSON.stringify(req.body, null, 2));
     
-    // BACKEND AUTHORITY: Check tracking state
-    // Use raw Map access to detect truly missing state (vs stopped state)
-    const rawState = trackingState.get(busId);
-    console.log("[BACKEND] Raw tracking state:", rawState);
-
-    // Auto-activate ONLY if state missing (server restart), NOT if stopped
-    if (!rawState) {
-      console.log("[BACKEND] State missing (restart?), auto-activating:", busId);
-      setTrackingActive(busId, true);
-    }
-
-    const state = getTrackingState(busId);
-    console.log("[BACKEND] Tracking state:", state);
-
-    // Block ONLY if tracking explicitly stopped (active === false)
-    // Allow updates during SOS - tracking continues for real-time visibility
-    if (state?.active === false) {
-      console.log("[BACKEND] BLOCKED - tracking stopped:", busId);
-      return res.status(403).json({ error: "Tracking not active" });
-    }
-
-    // Log SOS status but DO NOT block - tracking continues during emergency
-    const sosActive = state?.sos === true;
-    if (sosActive) {
-      console.log("[BACKEND] SOS active but tracking continues:", busId);
-    }
+    const { busId, source } = req.body;
     
     // Handle both lat/lng and latitude/longitude property names
     const lat = req.body.lat ?? req.body.latitude;
     const lng = req.body.lng ?? req.body.longitude;
+    
+    // === INPUT VALIDATION ===
+    const missingFields = [];
+    if (!busId) missingFields.push("busId");
+    if (lat == null) missingFields.push("latitude/lat");
+    if (lng == null) missingFields.push("longitude/lng");
+    
+    if (missingFields.length > 0) {
+      console.log("[BACKEND] ❌ MISSING FIELDS:", missingFields);
+      console.log("[BACKEND] req.body keys:", Object.keys(req.body));
+      return res.status(400).json({ 
+        error: "Missing required fields", 
+        missing: missingFields,
+        received: Object.keys(req.body)
+      });
+    }
+    
+    // === TRACKING STATE VALIDATION & AUTO-INIT ===
+    let state = trackingState.get(busId);
+    console.log("[BACKEND] trackingState.exists:", state !== undefined);
+    console.log("[BACKEND] trackingState.value:", state);
+    
+    // Auto-initialize on first location update (eliminates 403 loop)
+    if (!state) {
+      console.log("[BACKEND] Auto-initializing tracking state for:", busId);
+      state = {
+        trackingActive: true,
+        sos: false,
+        lastUpdate: Date.now(),
+        location: null
+      };
+      trackingState.set(busId, state);
+      console.log("[BACKEND] ✅ State auto-initialized:", busId);
+    }
+    
+    console.log("[BACKEND] Tracking state.trackingActive:", state?.trackingActive);
+    
+    // Block ONLY if explicitly stopped (not auto-initialized)
+    if (state?.trackingActive === false) {
+      console.log("[BACKEND] ❌ BLOCKED - tracking stopped:", busId);
+      return res.status(403).json({ error: "Tracking not active" });
+    }
 
-    if (!busId || lat == null || lng == null) {
-      console.log("❌ Missing fields:", { busId, lat, lng, body: req.body });
-      return res.status(400).json({ error: "Missing fields" });
+    // Log SOS status but DO NOT block
+    const sosActive = state?.sos === true;
+    if (sosActive) {
+      console.log("[BACKEND] 🚨 SOS active, tracking continues:", busId);
     }
 
     // STRICT VALIDATION - Reject null/invalid lat/lng
@@ -215,50 +235,66 @@ async function updateLocation(req, res) {
       }
     );
 
-    if (io) {
-      io.emit("busLocationUpdate", {
-        busId,
-        lat,
-        lng,
+    // === SOCKET EMITS (only when valid) ===
+    if (io && busId && Number.isFinite(numLat) && Number.isFinite(numLng)) {
+      // Primary location update
+      io.emit("BUS_LOCATION_UPDATE", {
+        busId: busId.trim(),
+        latitude: numLat,
+        longitude: numLng,
       });
+      console.log("[BACKEND] 📡 BUS_LOCATION_UPDATE emitted:", busId);
 
-      console.log("📡 busLocationUpdate emitted:", busId);
+      // ETA calculation and emit
+      try {
+        const route = await Route.findOne({ routeName: "Vellore Route" });
+        if (route && route.stops && route.stops.length > 0) {
+          const next = await getNextStop(numLat, numLng, route);
+          const avgSpeed = 30; // km/h
+          const etaMinutes = Math.max(1, Math.round((next.distance / avgSpeed) * 60));
 
-      const route = await Route.findOne({ routeName: "Vellore Route" });
-
-      if (!route || !route.stops || route.stops.length === 0) {
-        console.log("⚠️ No route data found");
-      } else {
-        const next = await getNextStop(Number(lat), Number(lng), route);
-
-        // average speed (adjustable)
-        const avgSpeed = 30; // km/h
-        const etaMinutes = Math.max(1, Math.round((next.distance / avgSpeed) * 60));
-
-        io.emit("busETAUpdate", {
-          busId,
-          nextStop: next.stop.name,
-          eta: etaMinutes,
-        });
-
-        console.log("🕒 ETA EMITTED:", next.stop.name, etaMinutes);
+          io.emit("busETAUpdate", {
+            busId: busId.trim(),
+            nextStop: next.stop.name,
+            eta: etaMinutes,
+          });
+          console.log("[BACKEND] 🕒 ETA emitted:", next.stop.name, etaMinutes);
+        } else {
+          console.log("[BACKEND] ⚠️ No route data for ETA");
+        }
+      } catch (etaErr) {
+        console.log("[BACKEND] ⚠️ ETA calculation failed:", etaErr.message);
       }
+    } else {
+      console.log("[BACKEND] ⚠️ Socket emits skipped - io or data invalid");
     }
 
-    // Refresh TTL timestamp to keep active drivers from expiring
-    // Use immutable update with spread operator
-    if (state) {
+    // === SAFE STATE UPDATE ===
+    if (state && busId) {
       trackingState.set(busId, {
         ...state,
-        updatedAt: Date.now()
+        lastUpdate: Date.now(),
+        location: { latitude: numLat, longitude: numLng }
       });
-      console.log("[BACKEND] Refreshed TTL for:", busId);
+      console.log("[BACKEND] ✅ State updated with location for:", busId);
+    } else {
+      console.log("[BACKEND] ⚠️ State update skipped - undefined state or busId");
     }
 
     return res.json({ success: true, data: updated });
   } catch (err) {
-    console.error("🔥 BACKEND ERROR:", err);
-    res.status(500).json({ error: "Server error" });
+    console.error("🔥 BACKEND ERROR ==========");
+    console.error("Message:", err.message);
+    console.error("Stack:", err.stack);
+    console.error("Request body:", req.body);
+    console.error("==========================");
+    
+    // Return 500 only for real crashes, with helpful info
+    res.status(500).json({ 
+      error: "Server error", 
+      message: err.message,
+      requestId: Date.now().toString(36)
+    });
   }
 };
 
@@ -629,31 +665,51 @@ async function getAllBusLocations(req, res) {
 // Controller to start tracking for a bus
 const startTracking = async (req, res) => {
   try {
+    console.log("[BACKEND] ========== START TRACKING ==========");
+    console.log("[BACKEND] req.body:", req.body);
+    
     const { busId } = req.body;
     if (!busId) {
+      console.log("[BACKEND] ❌ Missing busId");
       return res.status(400).json({ error: "busId required" });
     }
+    
+    console.log("[BACKEND] Initializing tracking state for:", busId);
     setTrackingActive(busId, true);
+    
+    const newState = trackingState.get(busId);
+    console.log("[BACKEND] ✅ Tracking started:", busId, "State:", newState);
+    
     return res.json({ success: true, message: "Tracking started", busId });
   } catch (err) {
-    console.error("[START TRACKING ERROR]", err);
-    return res.status(500).json({ error: "Failed to start tracking" });
+    console.error("[BACKEND] 🔥 START TRACKING ERROR:", err.message);
+    console.error("[BACKEND] Stack:", err.stack);
+    return res.status(500).json({ error: "Failed to start tracking", message: err.message });
   }
 };
 
 // Controller to stop tracking for a bus
 const stopTracking = async (req, res) => {
   try {
+    console.log("[BACKEND] ========== STOP TRACKING ==========");
+    console.log("[BACKEND] req.body:", req.body);
+    
     const { busId } = req.body;
     if (!busId) {
+      console.log("[BACKEND] ❌ Missing busId");
       return res.status(400).json({ error: "busId required" });
     }
+    
     const io = req.app.get("io");
+    console.log("[BACKEND] Stopping tracking for:", busId);
     setTrackingActive(busId, false, io);
+    
+    console.log("[BACKEND] ✅ Tracking stopped:", busId);
     return res.json({ success: true, message: "Tracking stopped", busId });
   } catch (err) {
-    console.error("[STOP TRACKING ERROR]", err);
-    return res.status(500).json({ error: "Failed to stop tracking" });
+    console.error("[BACKEND] 🔥 STOP TRACKING ERROR:", err.message);
+    console.error("[BACKEND] Stack:", err.stack);
+    return res.status(500).json({ error: "Failed to stop tracking", message: err.message });
   }
 };
 

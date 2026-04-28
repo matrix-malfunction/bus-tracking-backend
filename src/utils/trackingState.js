@@ -14,14 +14,15 @@ const TRACKING_STATE_TTL_MS = 5 * 60 * 1000;
  */
 const setTrackingActive = (busId, active, io = null) => {
   const prevState = trackingState.get(busId);
-  const wasActive = prevState?.active === true;
+  const wasActive = prevState?.trackingActive === true;
   const nextActive = active === true;
 
-  // Immutable state update
+  // Immutable state update with consistent keys
   const nextState = {
-    active: nextActive,
+    trackingActive: nextActive,
     sos: prevState?.sos || false, // Preserve SOS flag
-    updatedAt: Date.now()
+    lastUpdate: Date.now(),
+    location: prevState?.location || null
   };
   trackingState.set(busId, nextState);
 
@@ -51,9 +52,10 @@ const setSosState = (busId, sosState, io = null) => {
   if (!prevState) {
     console.log(`[TRACKING STATE] Bus ${busId}: Bootstrapping state for SOS`);
     const nextState = {
-      active: true,
+      trackingActive: true,
       sos: nextSos,
-      updatedAt: Date.now()
+      lastUpdate: Date.now(),
+      location: null
     };
     trackingState.set(busId, nextState);
     console.log(`[TRACKING STATE] Bus ${busId}: SOS ${nextSos ? "ACTIVE" : "CLEARED"}`);
@@ -66,17 +68,18 @@ const setSosState = (busId, sosState, io = null) => {
   }
 
   // Prevent SOS when tracking is explicitly stopped
-  if (prevState?.active === false) {
+  if (prevState?.trackingActive === false) {
     console.log(`[TRACKING STATE] Bus ${busId}: Cannot set SOS - tracking is stopped`);
     return false;
   }
 
   // Only allow SOS when tracking is explicitly active
-  // Immutable update: preserve existing state, update only sos and timestamp
+  // Immutable update with consistent keys
   const nextState = {
-    active: prevState?.active === true, // Strict check - only true if explicitly active
+    trackingActive: prevState?.trackingActive === true,
     sos: nextSos,
-    updatedAt: Date.now()
+    lastUpdate: Date.now(),
+    location: prevState?.location || null
   };
   trackingState.set(busId, nextState);
   console.log(`[TRACKING STATE] Bus ${busId}: SOS ${nextSos ? "ACTIVE" : "CLEARED"}`);
@@ -106,7 +109,7 @@ const isSosActive = (busId) => {
  */
 const isTrackingActive = (busId) => {
   const state = trackingState.get(busId);
-  return state?.active === true;
+  return state?.trackingActive === true;
 };
 
 /**
@@ -150,7 +153,7 @@ const getAllTrackingStates = () => {
 
 /**
  * Check and cleanup stale tracking states
- * Skips states already marked inactive (active === false)
+ * Skips states already marked inactive (trackingActive === false)
  * @param {object} io - Socket.io instance (optional, used to emit BUS_OFFLINE)
  * @returns {string[]} - Array of busIds that were cleaned up
  */
@@ -160,9 +163,9 @@ const cleanupStaleState = (io = null) => {
 
   trackingState.forEach((state, busId) => {
     // Skip already inactive states - no duplicate cleanup needed
-    if (state?.active === false) return;
+    if (state?.trackingActive === false) return;
 
-    const lastUpdate = state?.updatedAt || 0;
+    const lastUpdate = state?.lastUpdate || 0;
     const isStale = now - lastUpdate > TRACKING_STATE_TTL_MS;
 
     if (isStale) {
@@ -184,11 +187,11 @@ const cleanupStaleState = (io = null) => {
 const isStateStale = (busId) => {
   const state = trackingState.get(busId);
   // Inactive states are not "stale", they're intentionally stopped
-  if (state?.active === false) return false;
-  if (!state?.updatedAt) return true;
+  if (state?.trackingActive === false) return false;
+  if (!state?.lastUpdate) return true;
 
   const now = Date.now();
-  return now - state.updatedAt > TRACKING_STATE_TTL_MS;
+  return now - state.lastUpdate > TRACKING_STATE_TTL_MS;
 };
 
 module.exports = {
