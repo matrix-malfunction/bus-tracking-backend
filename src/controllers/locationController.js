@@ -218,14 +218,15 @@ async function updateLocation(req, res) {
     }
     
     // === UPDATE TRACKING STATE ===
-    if (state && busId) {
-      trackingState.set(busId, {
-        ...state,
-        lastUpdate: Date.now(),
-        location: { latitude: numLat, longitude: numLng }
-      });
-      console.log("[BACKEND] ✅ State updated with location for:", busId);
-    }
+    // Always update tracking state to prevent freeze
+    const currentState = trackingState.get(busId) || {};
+    trackingState.set(busId, {
+      ...currentState,
+      trackingActive: true,  // Ensure active on any update
+      lastUpdate: Date.now(),
+      location: { latitude: numLat, longitude: numLng }
+    });
+    console.log("[BACKEND] ✅ State updated:", busId, "lastUpdate:", Date.now());
     
     return res.json({ 
       success: true, 
@@ -618,7 +619,7 @@ const startTracking = async (req, res) => {
     console.log("[BACKEND] ========== START TRACKING ==========");
     console.log("[BACKEND] req.body:", req.body);
     
-    const { busId } = req.body;
+    const { busId, lat, lng } = req.body;
     if (!busId) {
       console.log("[BACKEND] ❌ Missing busId");
       return res.status(400).json({ error: "busId required" });
@@ -626,6 +627,24 @@ const startTracking = async (req, res) => {
     
     console.log("[BACKEND] Initializing tracking state for:", busId);
     setTrackingActive(busId, true);
+    
+    const io = req.app.get("io");
+    
+    // Immediately emit BUS_LOCATION_UPDATE if location provided
+    if (io && busId && lat != null && lng != null) {
+      const numLat = Number(lat);
+      const numLng = Number(lng);
+      if (Number.isFinite(numLat) && Number.isFinite(numLng)) {
+        const emitPayload = {
+          busId: busId.trim(),
+          latitude: numLat,
+          longitude: numLng,
+          trackingActive: true
+        };
+        console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE on start:", emitPayload);
+        io.emit("BUS_LOCATION_UPDATE", emitPayload);
+      }
+    }
     
     const newState = trackingState.get(busId);
     console.log("[BACKEND] ✅ Tracking started:", busId, "State:", newState);
