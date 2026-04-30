@@ -32,15 +32,16 @@ function calculateSpeed(prev, curr) {
 
   const timeDiff = (curr.timestamp - prev.timestamp) / 1000; // seconds
 
-  if (timeDiff <= 0) return prev.speed || 0;
+  // Ignore updates less than 1 second apart
+  if (timeDiff < 1) return prev.speed || 0;
 
-  // Ignore GPS noise (less than 3 meters)
-  if (distance < 3) return prev.speed || 0;
+  // Ignore GPS noise (less than 5 meters)
+  if (distance < 5) return prev.speed || 0;
 
   let speed = (distance / timeDiff) * 3.6; // convert to km/h
 
-  // Clamp unrealistic speeds
-  if (speed > 100) return prev.speed || 0;
+  // Clamp unrealistic speeds (over 120 km/h)
+  if (speed > 120) return prev.speed || 0;
 
   return speed;
 }
