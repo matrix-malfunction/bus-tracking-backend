@@ -30,7 +30,10 @@ function calculateSpeed(prev, curr) {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const distance = R * c; // meters
 
-  const timeDiff = (curr.timestamp - prev.timestamp) / 1000; // seconds
+  // Guard: ensure time is progressing
+  if (!prev.lastUpdate || curr.lastUpdate <= prev.lastUpdate) return prev.speed || 0;
+
+  const timeDiff = (curr.lastUpdate - prev.lastUpdate) / 1000; // seconds
 
   // Ignore updates less than 1 second apart
   if (timeDiff < 1) return prev.speed || 0;

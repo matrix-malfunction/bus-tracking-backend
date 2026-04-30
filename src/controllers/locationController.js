@@ -208,7 +208,7 @@ async function updateLocation(req, res) {
     const current = {
       lat: numLat,
       lng: numLng,
-      timestamp: Date.now(),
+      lastUpdate: Date.now(),
     };
 
     const rawSpeed = calculateSpeed(prev, current);
@@ -226,7 +226,7 @@ async function updateLocation(req, res) {
         busId: busId.trim(),
         latitude: numLat,
         longitude: numLng,
-        speed: Math.round(speed),
+        speed: speed, // raw value, no rounding
         heading: Math.round(heading),
       };
       console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", emitPayload);
