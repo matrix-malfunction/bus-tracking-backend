@@ -4,6 +4,7 @@ const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
 const { isTrackingActive, setTrackingActive, getTrackingState, trackingState } = require("../utils/trackingState");
+const { calculateSpeed, smoothSpeed, calculateHeading, smoothHeading } = require("../utils/speedCalculator");
 
 const { chooseBestSource } = require("../services/hybridSourceSelector");
 const { haversineKm } = require("../services/etaService");
@@ -202,31 +203,55 @@ async function updateLocation(req, res) {
       lng: numLng
     });
     
+    // === CALCULATE SPEED & HEADING ===
+    const prev = trackingState.get(busId);
+    const current = {
+      lat: numLat,
+      lng: numLng,
+      timestamp: Date.now(),
+    };
+
+    const rawSpeed = calculateSpeed(prev, current);
+    const { speed, history } = smoothSpeed(prev?.speedHistory, rawSpeed);
+
+    let heading = 0;
+    if (prev?.lat && prev?.lng) {
+      const newHeading = calculateHeading(prev, current);
+      heading = smoothHeading(prev.heading, newHeading);
+    }
+
     // === SOCKET EMIT ===
     if (io && busId && Number.isFinite(numLat) && Number.isFinite(numLng)) {
       const emitPayload = {
         busId: busId.trim(),
         latitude: numLat,
         longitude: numLng,
+        speed: Math.round(speed),
+        heading: Math.round(heading),
       };
       console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", emitPayload);
-      
+
       io.emit("BUS_LOCATION_UPDATE", emitPayload);
       console.log("[BACKEND] ✅ Socket event emitted");
     } else {
       console.log("[BACKEND] ⚠️ Socket emit skipped - invalid data");
     }
-    
+
     // === UPDATE TRACKING STATE ===
     // Always update tracking state to prevent freeze
     const currentState = trackingState.get(busId) || {};
     trackingState.set(busId, {
       ...currentState,
-      trackingActive: true,  // Ensure active on any update
+      trackingActive: true,
       lastUpdate: Date.now(),
-      location: { latitude: numLat, longitude: numLng }
+      location: { latitude: numLat, longitude: numLng },
+      lat: numLat,
+      lng: numLng,
+      speed,
+      heading,
+      speedHistory: history,
     });
-    console.log("[BACKEND] ✅ State updated:", busId, "lastUpdate:", Date.now());
+    console.log("[BACKEND] ✅ State updated:", busId, "speed:", Math.round(speed), "heading:", Math.round(heading));
     
     return res.json({ 
       success: true, 
