@@ -13,25 +13,31 @@ const TRACKING_STATE_TTL_MS = 5 * 60 * 1000;
  * @param {object} io - Socket.io instance (optional, used to emit BUS_OFFLINE)
  */
 const setTrackingActive = (busId, active, io = null) => {
-  const prevState = trackingState.get(busId);
+  const prevState = trackingState.get(busId) || {};
   const wasActive = prevState?.trackingActive === true;
   const nextActive = active === true;
+
+  // When going inactive, clear speed to prevent stale data
+  const nextSpeed = nextActive ? (prevState?.speed || 0) : 0;
 
   // Immutable state update with consistent keys
   const nextState = {
     trackingActive: nextActive,
     sos: prevState?.sos || false, // Preserve SOS flag
     lastUpdate: Date.now(),
-    location: prevState?.location || null
+    location: prevState?.location || null,
+    speed: nextSpeed
   };
   trackingState.set(busId, nextState);
 
   console.log(`[TRACKING STATE] Bus ${busId}: ${nextActive ? "ACTIVE" : "INACTIVE"}`);
 
-  // Emit BUS_OFFLINE only on explicit transition: active → inactive
+  // On BUS_OFFLINE transition (active → inactive), delete from trackingState after emitting
   if (wasActive && !nextActive && io) {
     io.emit("BUS_OFFLINE", { busId });
     console.log(`[BUS_OFFLINE] Emitted for bus: ${busId}`);
+    trackingState.delete(busId);
+    console.log(`[TRACKING STATE] Bus ${busId}: deleted from trackingState`);
   }
 
   return nextState;
@@ -74,12 +80,16 @@ const setSosState = (busId, sosState, io = null) => {
   }
 
   // Only allow SOS when tracking is explicitly active
+  // When SOS is active, set speed = 0
+  const nextSpeed = nextSos ? 0 : (prevState?.speed || 0);
+
   // Immutable update with consistent keys
   const nextState = {
     trackingActive: prevState?.trackingActive === true,
     sos: nextSos,
     lastUpdate: Date.now(),
-    location: prevState?.location || null
+    location: prevState?.location || null,
+    speed: nextSpeed
   };
   trackingState.set(busId, nextState);
   console.log(`[TRACKING STATE] Bus ${busId}: SOS ${nextSos ? "ACTIVE" : "CLEARED"}`);
@@ -98,7 +108,7 @@ const setSosState = (busId, sosState, io = null) => {
  * @returns {boolean} - true if SOS is active
  */
 const isSosActive = (busId) => {
-  const state = trackingState.get(busId);
+  const state = trackingState.get(busId) || {};
   return state?.sos === true;
 };
 
@@ -108,7 +118,7 @@ const isSosActive = (busId) => {
  * @returns {boolean} - true if tracking is active
  */
 const isTrackingActive = (busId) => {
-  const state = trackingState.get(busId);
+  const state = trackingState.get(busId) || {};
   return state?.trackingActive === true;
 };
 
@@ -170,6 +180,7 @@ const cleanupStaleState = (io = null) => {
 
     if (isStale) {
       console.log(`[TRACKING STATE] Bus ${busId}: STALE (last update ${Math.round((now - lastUpdate) / 1000)}s ago)`);
+      // Mark inactive, emit BUS_OFFLINE, and delete from trackingState
       setTrackingActive(busId, false, io);
       staleBusIds.push(busId);
     }
@@ -185,7 +196,7 @@ const cleanupStaleState = (io = null) => {
  * @returns {boolean} - true if state is stale
  */
 const isStateStale = (busId) => {
-  const state = trackingState.get(busId);
+  const state = trackingState.get(busId) || {};
   // Inactive states are not "stale", they're intentionally stopped
   if (state?.trackingActive === false) return false;
   if (!state?.lastUpdate) return true;
