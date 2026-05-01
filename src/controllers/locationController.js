@@ -211,7 +211,7 @@ async function updateLocation(req, res) {
       lastUpdate: Date.now(),
     };
 
-    const rawSpeed = calculateSpeed(prev, current);
+    const { speed: rawSpeed, idleStartTime } = calculateSpeed(prev, current);
     const { speed, history } = smoothSpeed(prev?.speedHistory, rawSpeed);
 
     let heading = 0;
@@ -250,6 +250,7 @@ async function updateLocation(req, res) {
       speed,
       heading,
       speedHistory: history,
+      idleStartTime,
     });
     console.log("[BACKEND] ✅ State updated:", busId, "speed:", Math.round(speed), "heading:", Math.round(heading));
     

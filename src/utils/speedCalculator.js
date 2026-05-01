@@ -4,19 +4,20 @@
  */
 
 const R = 6371000; // Earth radius in meters
+const IDLE_TIMEOUT = 5000; // ms - time before considering bus stationary
 
 function toRad(deg) {
   return (deg * Math.PI) / 180;
 }
 
 /**
- * Calculate speed using Haversine formula
- * @param {Object} prev - Previous position { lat, lng, timestamp, speed }
- * @param {Object} curr - Current position { lat, lng, timestamp }
- * @returns {number} Speed in km/h
+ * Calculate speed using Haversine formula with cumulative idle tracking
+ * @param {Object} prev - Previous position { lat, lng, lastUpdate, speed, idleStartTime }
+ * @param {Object} curr - Current position { lat, lng, lastUpdate }
+ * @returns {Object} { speed, idleStartTime }
  */
 function calculateSpeed(prev, curr) {
-  if (!prev || !prev.lat || !prev.lng) return 0;
+  if (!prev || !prev.lat || !prev.lng) return { speed: 0, idleStartTime: null };
 
   const dLat = toRad(curr.lat - prev.lat);
   const dLng = toRad(curr.lng - prev.lng);
@@ -31,22 +32,43 @@ function calculateSpeed(prev, curr) {
   const distance = R * c; // meters
 
   // Guard: ensure time is progressing
-  if (!prev.lastUpdate || curr.lastUpdate <= prev.lastUpdate) return prev.speed || 0;
+  if (!prev.lastUpdate || curr.lastUpdate <= prev.lastUpdate) {
+    return { speed: prev.speed || 0, idleStartTime: prev.idleStartTime };
+  }
 
   const timeDiff = (curr.lastUpdate - prev.lastUpdate) / 1000; // seconds
 
   // Ignore updates less than 1 second apart
-  if (timeDiff < 1) return prev.speed || 0;
+  if (timeDiff < 1) {
+    return { speed: prev.speed || 0, idleStartTime: prev.idleStartTime };
+  }
 
-  // Ignore GPS noise (less than 5 meters)
-  if (distance < 5) return prev.speed || 0;
+  // Movement detected - reset idle timer
+  if (distance >= 5) {
+    const speed = (distance / timeDiff) * 3.6;
+    // Clamp unrealistic speeds
+    if (speed > 120) {
+      return { speed: prev.speed || 0, idleStartTime: null };
+    }
+    return { speed, idleStartTime: null };
+  }
 
-  let speed = (distance / timeDiff) * 3.6; // convert to km/h
+  // No significant movement - track cumulative idle time
+  let idleStartTime = prev.idleStartTime;
+  if (!idleStartTime) {
+    // Anchor to when we last had movement (prev update time)
+    idleStartTime = prev.lastUpdate;
+  }
 
-  // Clamp unrealistic speeds (over 120 km/h)
-  if (speed > 120) return prev.speed || 0;
+  const idleDuration = curr.lastUpdate - idleStartTime;
 
-  return speed;
+  // If idle for > IDLE_TIMEOUT, consider stationary
+  if (idleDuration > IDLE_TIMEOUT) {
+    return { speed: 0, idleStartTime };
+  }
+
+  // Still within idle threshold - maintain previous speed
+  return { speed: prev.speed || 0, idleStartTime };
 }
 
 /**

@@ -1,0 +1,31 @@
+{
+  "tiruvallur": [
+    { "name": "Tiruvallur Bus Stand", "lat": 13.1448, "lng": 79.9083, "isMajor": true },
+    { "name": "Tiruvallur Railway Station", "lat": 13.1374, "lng": 79.9091, "isMajor": true },
+    { "name": "Pandur", "lat": 13.1089, "lng": 79.8923, "isMajor": false },
+    { "name": "Vengal", "lat": 13.0934, "lng": 79.8856, "isMajor": false },
+    { "name": "Thozhur", "lat": 13.0678, "lng": 79.8789, "isMajor": false },
+    { "name": "Thirumazhisai", "lat": 13.0512, "lng": 79.8721, "isMajor": false },
+    { "name": "Nemilichery", "lat": 13.0345, "lng": 79.8654, "isMajor": false },
+    { "name": "Pattabiram", "lat": 13.0134, "lng": 79.9589, "isMajor": true },
+    { "name": "Avadi", "lat": 13.1147, "lng": 80.1018, "isMajor": true },
+    { "name": "Thiruninravur", "lat": 13.0756, "lng": 80.0254, "isMajor": false }
+  ],
+  "vellore": [
+    { "name": "Vellore Bus Stand", "lat": 12.9165, "lng": 79.1325, "isMajor": true },
+    { "name": "Vellore Railway Station", "lat": 12.9068, "lng": 79.1347, "isMajor": true },
+    { "name": "Katpadi", "lat": 12.9756, "lng": 79.1375, "isMajor": true },
+    { "name": "Gandhinagar", "lat": 12.9234, "lng": 79.1456, "isMajor": false },
+    { "name": "Thottapalayam", "lat": 12.9412, "lng": 79.1289, "isMajor": false },
+    { "name": "Sainathapuram", "lat": 12.9567, "lng": 79.1523, "isMajor": false },
+    { "name": "Rangapuram", "lat": 12.8889, "lng": 79.1187, "isMajor": false },
+    { "name": "Adukamparai", "lat": 12.8734, "lng": 79.1056, "isMajor": false },
+    { "name": "Pallikonda", "lat": 12.8234, "lng": 78.9567, "isMajor": false },
+    { "name": "Ambur", "lat": 12.7912, "lng": 78.7167, "isMajor": true },
+    { "name": "Vaniyambadi", "lat": 12.6812, "lng": 78.6234, "isMajor": false },
+    { "name": "Gudiyatham", "lat": 12.9512, "lng": 78.8567, "isMajor": false },
+    { "name": "Pernambut", "lat": 12.7312, "lng": 78.9234, "isMajor": false },
+    { "name": "Melvisharam", "lat": 12.9012, "lng": 79.0234, "isMajor": false },
+    { "name": "Ranipet", "lat": 12.9567, "lng": 79.3234, "isMajor": false }
+  ]
+}

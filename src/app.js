@@ -13,6 +13,7 @@ const driverEmergencyRoutes = require("./routes/driverEmergencyRoutes");
 const sosRoutes = require("./routes/sosRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const busTrackingRoutes = require("./routes/busTrackingRoutes");
+const busStopRoutes = require("./routes/busStopRoutes");
 
 const app = express();
 
@@ -55,6 +56,7 @@ app.use("/api/passenger/sos", passengerSosRoutes);
 app.use("/api/passenger", passengerRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/buses", busTrackingRoutes);
+app.use("/api/bus-stops", busStopRoutes);
 
 // Debug endpoint to verify latest code is running
 app.get("/_health/routes", (req, res) => res.json({ ok: true, timestamp: Date.now() }));
