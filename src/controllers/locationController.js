@@ -4,7 +4,7 @@ const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
 const { isTrackingActive, setTrackingActive, getTrackingState, trackingState } = require("../utils/trackingState");
-const { calculateSpeed, smoothSpeed, calculateHeading, smoothHeading } = require("../utils/speedCalculator");
+// Speed comes directly from driver app - no backend recalculation needed
 
 const { chooseBestSource } = require("../services/hybridSourceSelector");
 const { haversineKm } = require("../services/etaService");
@@ -15,6 +15,7 @@ const EMIT_DISTANCE_THRESHOLD_METERS = 15;
 const MIN_SPEED_KMPH = 10;
 const DEFAULT_SPEED_KMPH = 30;
 const MAX_SPEED_KMPH = 80;
+const MIN_SPEED_MPS = 5 / 3.6; // 5 km/h dead-zone filter (~1.39 m/s)
 const STOP_THRESHOLD_METERS = 15;
 const MIN_TIME_DIFF_SEC = 3;
 const JITTER_THRESHOLD_METERS = 8;
@@ -120,7 +121,7 @@ async function updateLocation(req, res) {
     const io = req.app.get("io");
     console.log("[BACKEND] io exists:", !!io);
     
-    const { busId, source } = req.body;
+    const { busId, source, speed: driverSpeed, heading: driverHeading } = req.body;
     const lat = req.body.lat ?? req.body.latitude;
     const lng = req.body.lng ?? req.body.longitude;
     
@@ -203,21 +204,17 @@ async function updateLocation(req, res) {
       lng: numLng
     });
     
-    // === CALCULATE SPEED & HEADING ===
-    const prev = trackingState.get(busId);
-    const current = {
-      lat: numLat,
-      lng: numLng,
-      lastUpdate: Date.now(),
-    };
-
-    const { speed: rawSpeed, idleStartTime } = calculateSpeed(prev, current);
-    const { speed, history } = smoothSpeed(prev?.speedHistory, rawSpeed);
-
-    let heading = 0;
-    if (prev?.lat && prev?.lng) {
-      const newHeading = calculateHeading(prev, current);
-      heading = smoothHeading(prev.heading, newHeading);
+    // === USE DRIVER-COMPUTED SPEED (Single Source of Truth) ===
+    // Backend does NOT recalculate - uses speed from driver app
+    const rawDriverSpeed = Number(driverSpeed) || 0;
+    const heading = Number(driverHeading) || 0;
+    
+    // DEAD-ZONE FILTER: If speed < 5 km/h, consider stationary (prevents UI noise)
+    const speed = rawDriverSpeed < MIN_SPEED_MPS ? 0 : rawDriverSpeed;
+    
+    console.log("[BACKEND] Using driver speed:", rawDriverSpeed, "m/s (", Math.round(rawDriverSpeed * 3.6), "km/h)");
+    if (speed === 0 && rawDriverSpeed > 0) {
+      console.log("[BACKEND] Speed filtered to 0 (below 5 km/h threshold)");
     }
 
     // === SOCKET EMIT ===
@@ -226,7 +223,7 @@ async function updateLocation(req, res) {
         busId: busId.trim(),
         latitude: numLat,
         longitude: numLng,
-        speed: speed, // raw value, no rounding
+        speed: speed, // Driver-computed speed, no backend recalculation
         heading: Math.round(heading),
       };
       console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", emitPayload);
@@ -238,21 +235,18 @@ async function updateLocation(req, res) {
     }
 
     // === UPDATE TRACKING STATE ===
-    // Always update tracking state to prevent freeze
-    const currentState = trackingState.get(busId) || {};
+    // FULL OVERWRITE - no spread operator, prevents stale data merging
     trackingState.set(busId, {
-      ...currentState,
-      trackingActive: true,
-      lastUpdate: Date.now(),
-      location: { latitude: numLat, longitude: numLng },
+      busId: busId.trim(),
       lat: numLat,
       lng: numLng,
-      speed,
-      heading,
-      speedHistory: history,
-      idleStartTime,
+      speed: speed, // Always use driver speed, no fallback
+      heading: Math.round(heading),
+      lastUpdate: Date.now(),
+      trackingActive: true,
+      location: { latitude: numLat, longitude: numLng },
     });
-    console.log("[BACKEND] ✅ State updated:", busId, "speed:", Math.round(speed), "heading:", Math.round(heading));
+    console.log("[BACKEND] ✅ State updated (FULL OVERWRITE):", busId, "speed:", Math.round(speed), "km/h");
     
     return res.json({ 
       success: true, 
