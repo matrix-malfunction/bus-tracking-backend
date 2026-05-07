@@ -44,13 +44,14 @@ const setTrackingActive = (busId, active, io = null) => {
 };
 
 /**
- * Set SOS state for a bus (does NOT disable tracking)
+ * Set SOS state for a bus (DISABLES tracking when active)
  * @param {string} busId - Bus identifier
  * @param {boolean} sosState - true = SOS active
  * @param {object} io - Socket.io instance (optional)
+ * @param {object} location - { lat, lng } for SOS trigger (optional)
  * @returns {boolean} - true if SOS was set, false if tracking is off
  */
-const setSosState = (busId, sosState, io = null) => {
+const setSosState = (busId, sosState, io = null, location = null) => {
   const prevState = trackingState.get(busId);
   const nextSos = sosState === true;
 
@@ -58,45 +59,79 @@ const setSosState = (busId, sosState, io = null) => {
   if (!prevState) {
     console.log(`[TRACKING STATE] Bus ${busId}: Bootstrapping state for SOS`);
     const nextState = {
-      trackingActive: true,
+      trackingActive: !nextSos, // DISABLE tracking when SOS active
+      sosActive: nextSos,
       sos: nextSos,
       lastUpdate: Date.now(),
-      location: null
+      location: location || null
     };
     trackingState.set(busId, nextState);
     console.log(`[TRACKING STATE] Bus ${busId}: SOS ${nextSos ? "ACTIVE" : "CLEARED"}`);
 
     if (nextSos && io) {
-      io.emit("SOS_TRIGGERED", { busId, timestamp: Date.now() });
+      // Emit BUS_OFFLINE first (bus is no longer tracking)
+      io.emit("BUS_OFFLINE", { busId });
+      console.log(`[BUS_OFFLINE] Emitted for SOS bus: ${busId}`);
+      // Then emit SOS_TRIGGERED with location
+      io.emit("SOS_TRIGGERED", { 
+        busId, 
+        lat: location?.lat,
+        lng: location?.lng,
+        timestamp: Date.now() 
+      });
       console.log(`[SOS_TRIGGERED] Emitted for bus: ${busId}`);
     }
     return true;
   }
 
-  // Prevent SOS when tracking is explicitly stopped
-  if (prevState?.trackingActive === false) {
-    console.log(`[TRACKING STATE] Bus ${busId}: Cannot set SOS - tracking is stopped`);
-    return false;
+  // === SOS TRIGGER (active → active) ===
+  if (nextSos) {
+    console.log(`[TRACKING STATE] Bus ${busId}: SOS TRIGGERED - disabling tracking`);
+    
+    // DISABLE tracking, enable SOS
+    const nextState = {
+      trackingActive: false,  // STOP tracking
+      sosActive: true,
+      sos: true,
+      lastUpdate: Date.now(),
+      location: location || prevState?.location || null,
+      speed: 0
+    };
+    trackingState.set(busId, nextState);
+    console.log(`[TRACKING STATE] Bus ${busId}: SOS ACTIVE, tracking DISABLED`);
+
+    if (io) {
+      // Emit BUS_OFFLINE first (remove from active buses)
+      io.emit("BUS_OFFLINE", { busId });
+      console.log(`[BUS_OFFLINE] Emitted for SOS bus: ${busId}`);
+      // Then emit SOS_TRIGGERED with location
+      io.emit("SOS_TRIGGERED", { 
+        busId, 
+        lat: location?.lat || prevState?.location?.lat,
+        lng: location?.lng || prevState?.location?.lng,
+        timestamp: Date.now() 
+      });
+      console.log(`[SOS_TRIGGERED] Emitted for bus: ${busId}`);
+    }
+    return true;
   }
 
-  // Only allow SOS when tracking is explicitly active
-  // When SOS is active, set speed = 0
-  const nextSpeed = nextSos ? 0 : (prevState?.speed || 0);
-
-  // Immutable update with consistent keys
+  // === SOS CLEAR (active → inactive) ===
+  console.log(`[TRACKING STATE] Bus ${busId}: SOS CLEARED`);
   const nextState = {
     trackingActive: prevState?.trackingActive === true,
-    sos: nextSos,
+    sosActive: false,
+    sos: false,
     lastUpdate: Date.now(),
     location: prevState?.location || null,
-    speed: nextSpeed
+    speed: prevState?.speed || 0
   };
   trackingState.set(busId, nextState);
-  console.log(`[TRACKING STATE] Bus ${busId}: SOS ${nextSos ? "ACTIVE" : "CLEARED"}`);
+  console.log(`[TRACKING STATE] Bus ${busId}: SOS CLEARED`);
 
-  if (nextSos && io) {
-    io.emit("SOS_TRIGGERED", { busId, timestamp: Date.now() });
-    console.log(`[SOS_TRIGGERED] Emitted for bus: ${busId}`);
+  if (io) {
+    io.emit("SOS_CLEARED", { busId, timestamp: Date.now() });
+    console.log(`[SOS_CLEARED] Emitted for bus: ${busId}`);
   }
 
   return true;
