@@ -1,49 +1,101 @@
 const express = require('express');
 const router = express.Router();
-const busStops = require('../data/busStops.json');
+const { getBusStops, filterByBoundingBox, limitResults, clearCache, BOUNDING_BOX } = require('../services/overpassService');
 
 /**
  * GET /api/bus-stops
- * Returns all bus stops for Tiruvallur and Vellore
+ * Returns bus stops for Thiruvallur and Vellore from Overpass API
+ * REQUIRED query params for bounding box filtering:
+ * ?minLat=&maxLat=&minLng=&maxLng=
  */
-router.get('/', (req, res) => {
-  console.log('[API] GET /bus-stops - returning bus stops');
-  
-  // Flatten all stops into a single array with region info
-  const allStops = [
-    ...busStops.tiruvallur.map(stop => ({ ...stop, region: 'tiruvallur' })),
-    ...busStops.vellore.map(stop => ({ ...stop, region: 'vellore' }))
-  ];
-  
-  res.json({
-    success: true,
-    count: allStops.length,
-    stops: allStops
-  });
+router.get('/', async (req, res) => {
+  try {
+    console.log('[API] GET /bus-stops - fetching from Overpass API');
+
+    const { minLat, maxLat, minLng, maxLng } = req.query;
+
+    // Fetch all bus stops from Overpass (with caching)
+    let stops = await getBusStops();
+
+    // Enforce bounding box filtering - REQUIRED
+    if (!minLat || !maxLat || !minLng || !maxLng) {
+      console.log('[API] Bounding box not provided, returning default region stops');
+      // Use default bounding box for Thiruvallur + Vellore
+      stops = filterByBoundingBox(
+        stops,
+        BOUNDING_BOX.minLat,
+        BOUNDING_BOX.maxLat,
+        BOUNDING_BOX.minLng,
+        BOUNDING_BOX.maxLng
+      );
+    } else {
+      stops = filterByBoundingBox(
+        stops,
+        parseFloat(minLat),
+        parseFloat(maxLat),
+        parseFloat(minLng),
+        parseFloat(maxLng)
+      );
+    }
+
+    // Limit results to prevent UI overload
+    stops = limitResults(stops);
+
+    res.json({
+      success: true,
+      count: stops.length,
+      stops: stops
+    });
+  } catch (error) {
+    console.error('[API] Error fetching bus stops:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch bus stops from Overpass API',
+      message: error.message
+    });
+  }
 });
 
 /**
- * GET /api/bus-stops/:region
- * Returns bus stops for a specific region
+ * GET /api/bus-stops/refresh
+ * Force refresh cache and fetch fresh data from Overpass
  */
-router.get('/:region', (req, res) => {
-  const { region } = req.params;
-  
-  if (!busStops[region]) {
-    return res.status(404).json({
+router.get('/refresh', async (req, res) => {
+  try {
+    console.log('[API] GET /bus-stops/refresh - forcing cache refresh');
+
+    // Clear cache using proper function
+    clearCache();
+
+    // Fetch fresh data
+    const stops = await getBusStops();
+
+    // Apply default bounding box filtering
+    stops = filterByBoundingBox(
+      stops,
+      BOUNDING_BOX.minLat,
+      BOUNDING_BOX.maxLat,
+      BOUNDING_BOX.minLng,
+      BOUNDING_BOX.maxLng
+    );
+
+    // Limit results
+    stops = limitResults(stops);
+
+    res.json({
+      success: true,
+      count: stops.length,
+      stops: stops,
+      message: 'Cache refreshed successfully'
+    });
+  } catch (error) {
+    console.error('[API] Error refreshing bus stops:', error.message);
+    res.status(500).json({
       success: false,
-      error: `Region '${region}' not found. Available: tiruvallur, vellore`
+      error: 'Failed to refresh bus stops from Overpass API',
+      message: error.message
     });
   }
-  
-  const stops = busStops[region].map(stop => ({ ...stop, region }));
-  
-  res.json({
-    success: true,
-    region,
-    count: stops.length,
-    stops
-  });
 });
 
 module.exports = router;
