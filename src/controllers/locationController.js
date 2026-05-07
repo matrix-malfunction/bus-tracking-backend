@@ -157,7 +157,33 @@ async function updateLocation(req, res) {
       trackingState.set(busId, state);
     }
     
-    // Block only if explicitly stopped
+    // === HANDLE STOP SIGNAL ===
+    // If driver sends trackingActive: false, mark bus offline immediately
+    if (req.body.trackingActive === false) {
+      console.log("[BACKEND] STOP signal received for:", busId);
+      
+      // Update tracking state to inactive
+      trackingState.set(busId, {
+        ...state,
+        trackingActive: false,
+        lastUpdate: Date.now()
+      });
+      
+      // Emit BUS_OFFLINE to all clients
+      if (io && busId) {
+        io.emit("BUS_OFFLINE", { busId });
+        console.log("[BACKEND] 📡 Emitted BUS_OFFLINE for:", busId);
+      }
+      
+      return res.json({ 
+        success: true, 
+        message: "Tracking stopped",
+        busId,
+        trackingActive: false
+      });
+    }
+    
+    // Block if explicitly stopped
     if (state?.trackingActive === false) {
       console.log("[BACKEND] ❌ BLOCKED - tracking stopped:", busId);
       return res.status(403).json({ error: "Tracking not active" });
