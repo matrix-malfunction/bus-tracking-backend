@@ -58,6 +58,15 @@ const setSosState = (busId, sosState, io = null, location = null) => {
   // Bootstrap state if missing (emergency - always allow SOS)
   if (!prevState) {
     console.log(`[TRACKING STATE] Bus ${busId}: Bootstrapping state for SOS`);
+    
+    // Extract location with multiple fallback strategies
+    const sosLat = location?.lat 
+      ?? location?.latitude 
+      ?? null;
+    const sosLng = location?.lng 
+      ?? location?.longitude 
+      ?? null;
+    
     const nextState = {
       trackingActive: !nextSos, // DISABLE tracking when SOS active
       sosActive: nextSos,
@@ -75,11 +84,11 @@ const setSosState = (busId, sosState, io = null, location = null) => {
       // Then emit SOS_TRIGGERED with location
       io.emit("SOS_TRIGGERED", { 
         busId, 
-        lat: location?.lat,
-        lng: location?.lng,
+        lat: sosLat,
+        lng: sosLng,
         timestamp: Date.now() 
       });
-      console.log(`[SOS_TRIGGERED] Emitted for bus: ${busId}`);
+      console.log(`[SOS_TRIGGERED] Emitted for bus: ${busId}, lat: ${sosLat}, lng: ${sosLng}`);
     }
     return true;
   }
@@ -104,14 +113,27 @@ const setSosState = (busId, sosState, io = null, location = null) => {
       // Emit BUS_OFFLINE first (remove from active buses)
       io.emit("BUS_OFFLINE", { busId });
       console.log(`[BUS_OFFLINE] Emitted for SOS bus: ${busId}`);
+      
+      // Extract location with multiple fallback strategies
+      const sosLat = location?.lat 
+        ?? prevState?.location?.lat 
+        ?? prevState?.location?.latitude 
+        ?? prevState?.lat 
+        ?? null;
+      const sosLng = location?.lng 
+        ?? prevState?.location?.lng 
+        ?? prevState?.location?.longitude 
+        ?? prevState?.lng 
+        ?? null;
+      
       // Then emit SOS_TRIGGERED with location
       io.emit("SOS_TRIGGERED", { 
         busId, 
-        lat: location?.lat || prevState?.location?.lat,
-        lng: location?.lng || prevState?.location?.lng,
+        lat: sosLat,
+        lng: sosLng,
         timestamp: Date.now() 
       });
-      console.log(`[SOS_TRIGGERED] Emitted for bus: ${busId}`);
+      console.log(`[SOS_TRIGGERED] Emitted for bus: ${busId}, lat: ${sosLat}, lng: ${sosLng}`);
     }
     return true;
   }

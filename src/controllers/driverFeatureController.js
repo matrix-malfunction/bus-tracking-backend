@@ -64,7 +64,7 @@ async function triggerSos(req, res) {
 
     // Set SOS flag but KEEP tracking active for real-time updates
     const io = req.app.get("io");
-    setSosState(busId, true, io);
+    setSosState(busId, true, io, { lat: latitude, lng: longitude });
     console.log("[SOS] SOS flag set for bus (tracking continues):", busId);
 
     if (io) {
