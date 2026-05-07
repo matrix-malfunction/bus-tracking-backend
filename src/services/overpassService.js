@@ -18,10 +18,10 @@ let cache = {
 // Thiruvallur: ~13.12, 79.91
 // Vellore: ~12.92, 79.13
 const BOUNDING_BOX = {
-  minLat: 12.5,
-  maxLat: 13.3,
-  minLng: 78.8,
-  maxLng: 80.2
+  minLat: 12.0,
+  maxLat: 13.6,
+  minLng: 78.5,
+  maxLng: 80.6
 };
 
 /**
