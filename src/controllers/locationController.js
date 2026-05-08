@@ -3,7 +3,7 @@ const Route = require("../models/Route");
 const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
-const { isTrackingActive, setTrackingActive, getTrackingState, trackingState } = require("../utils/trackingState");
+const { isTrackingActive, setTrackingActive, getTrackingState, isSosActive, trackingState } = require("../utils/trackingState");
 // Speed comes directly from driver app - no backend recalculation needed
 
 const { chooseBestSource } = require("../services/hybridSourceSelector");
@@ -187,6 +187,17 @@ async function updateLocation(req, res) {
     if (state?.trackingActive === false) {
       console.log("[BACKEND] ❌ BLOCKED - tracking stopped:", busId);
       return res.status(403).json({ error: "Tracking not active" });
+    }
+    
+    // === BLOCK UPDATES DURING SOS ===
+    // SOS completely overrides tracking - no location updates allowed
+    if (state?.sosStatus) {
+      console.log("[BACKEND] SOS active - ignoring location update:", busId, "status:", state.sosStatus);
+      return res.json({ 
+        success: true, 
+        ignored: true,
+        sosStatus: state.sosStatus 
+      });
     }
     
     // === STRICT VALIDATION ===

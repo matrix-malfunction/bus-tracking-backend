@@ -1,6 +1,6 @@
 const DriverEmergency = require("../models/DriverEmergency");
 const Bus = require("../models/Bus");
-const { setSosState } = require("../utils/trackingState");
+const { setSosState, acknowledgeSos } = require("../utils/trackingState");
 
 async function reportDriverEmergency(req, res) {
   try {
@@ -87,7 +87,35 @@ async function triggerSos(req, res) {
   }
 }
 
+async function acknowledgeSosController(req, res) {
+  try {
+    const busId = String(req.body?.busId || "").trim();
+    if (!busId) {
+      return res.status(400).json({ message: "busId is required" });
+    }
+
+    const io = req.app.get("io");
+    
+    // Use trackingState to acknowledge SOS
+    const success = acknowledgeSos(busId, io);
+    
+    if (!success) {
+      return res.status(400).json({ message: "No active SOS for this bus" });
+    }
+
+    return res.status(200).json({
+      message: "SOS acknowledged",
+      busId,
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    console.error("[SOS ACK] Error:", error);
+    return res.status(500).json({ message: "Failed to acknowledge SOS" });
+  }
+}
+
 module.exports = {
   reportDriverEmergency,
   triggerSos,
+  acknowledgeSos: acknowledgeSosController,
 };
