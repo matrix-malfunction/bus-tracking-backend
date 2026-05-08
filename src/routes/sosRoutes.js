@@ -1,5 +1,5 @@
 const express = require("express");
-const { triggerSos } = require("../controllers/driverFeatureController");
+const { triggerSos, acknowledgeSos, clearSos } = require("../controllers/driverFeatureController");
 const DriverEmergency = require("../models/DriverEmergency");
 
 console.log("[ROUTE] SOS routes loaded from:", __filename);
@@ -75,5 +75,11 @@ router.get("/status", async (req, res) => {
 });
 
 router.post("/", triggerSos);
+
+// POST /api/sos/ack - Acknowledge SOS (admin/operator action)
+router.post("/ack", acknowledgeSos);
+
+// POST /api/sos/clear - Clear SOS (admin/operator action)
+router.post("/clear", clearSos);
 
 module.exports = router;

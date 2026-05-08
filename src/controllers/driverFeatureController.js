@@ -87,7 +87,71 @@ async function triggerSos(req, res) {
   }
 }
 
+async function acknowledgeSos(req, res) {
+  try {
+    const busId = String(req.body?.busId || "").trim();
+    if (!busId) {
+      return res.status(400).json({ message: "busId is required" });
+    }
+
+    const io = req.app.get("io");
+    
+    // Update DB to acknowledged status
+    await DriverEmergency.findOneAndUpdate(
+      { busId, status: { $in: ["active", "sos", "SOS"] } },
+      { status: "acknowledged", acknowledgedAt: new Date() },
+      { sort: { createdAt: -1 } }
+    );
+
+    // Emit SOS_ACKNOWLEDGED to all clients
+    if (io) {
+      io.emit("SOS_ACKNOWLEDGED", { busId, acknowledgedAt: new Date() });
+      console.log("[SOS] Acknowledged:", busId);
+    }
+
+    return res.status(200).json({ message: "SOS acknowledged", busId });
+  } catch (error) {
+    console.error("[SOS ACK ERROR]", error.message);
+    return res.status(500).json({ message: "Failed to acknowledge SOS" });
+  }
+}
+
+async function clearSos(req, res) {
+  try {
+    const busId = String(req.body?.busId || "").trim();
+    if (!busId) {
+      return res.status(400).json({ message: "busId is required" });
+    }
+
+    const io = req.app.get("io");
+    
+    // Update DB to resolved status
+    await DriverEmergency.findOneAndUpdate(
+      { busId, status: { $in: ["active", "sos", "SOS", "acknowledged"] } },
+      { status: "resolved", resolvedAt: new Date() },
+      { sort: { createdAt: -1 } }
+    );
+
+    // Clear SOS state (tracking remains disabled until driver restarts)
+    const { setSosState } = require("../utils/trackingState");
+    setSosState(busId, false, io);
+
+    // Emit SOS_CLEARED to all clients
+    if (io) {
+      io.emit("SOS_CLEARED", { busId, clearedAt: new Date() });
+      console.log("[SOS] Cleared:", busId);
+    }
+
+    return res.status(200).json({ message: "SOS cleared", busId });
+  } catch (error) {
+    console.error("[SOS CLEAR ERROR]", error.message);
+    return res.status(500).json({ message: "Failed to clear SOS" });
+  }
+}
+
 module.exports = {
   reportDriverEmergency,
   triggerSos,
+  acknowledgeSos,
+  clearSos,
 };
