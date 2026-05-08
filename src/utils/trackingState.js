@@ -21,10 +21,9 @@ const setTrackingActive = (busId, active, io = null) => {
   const nextSpeed = nextActive ? (prevState?.speed || 0) : 0;
 
   // Immutable state update with consistent keys
-  // PRESERVE sosStatus during tracking state changes
   const nextState = {
     trackingActive: nextActive,
-    sosStatus: prevState?.sosStatus || null, // "ACTIVE" | "ACKNOWLEDGED" | null
+    sos: prevState?.sos || false, // Preserve SOS flag
     lastUpdate: Date.now(),
     location: prevState?.location || null,
     speed: nextSpeed
@@ -34,18 +33,11 @@ const setTrackingActive = (busId, active, io = null) => {
   console.log(`[TRACKING STATE] Bus ${busId}: ${nextActive ? "ACTIVE" : "INACTIVE"}`);
 
   // On BUS_OFFLINE transition (active → inactive), delete from trackingState after emitting
-  // BUT: Keep state if SOS is active (sosStatus !== null)
   if (wasActive && !nextActive && io) {
     io.emit("BUS_OFFLINE", { busId });
     console.log(`[BUS_OFFLINE] Emitted for bus: ${busId}`);
-    
-    // Only delete if no SOS is active
-    if (!prevState?.sosStatus) {
-      trackingState.delete(busId);
-      console.log(`[TRACKING STATE] Bus ${busId}: deleted from trackingState`);
-    } else {
-      console.log(`[TRACKING STATE] Bus ${busId}: keeping state (SOS: ${prevState.sosStatus})`);
-    }
+    trackingState.delete(busId);
+    console.log(`[TRACKING STATE] Bus ${busId}: deleted from trackingState`);
   }
 
   return nextState;
@@ -53,7 +45,6 @@ const setTrackingActive = (busId, active, io = null) => {
 
 /**
  * Set SOS state for a bus (DISABLES tracking when active)
- * Unified sosStatus: "ACTIVE" | "ACKNOWLEDGED" | null
  * @param {string} busId - Bus identifier
  * @param {boolean} sosState - true = SOS active
  * @param {object} io - Socket.io instance (optional)
@@ -69,12 +60,17 @@ const setSosState = (busId, sosState, io = null, location = null) => {
     console.log(`[TRACKING STATE] Bus ${busId}: Bootstrapping state for SOS`);
     
     // Extract location with multiple fallback strategies
-    const sosLat = location?.lat ?? location?.latitude ?? null;
-    const sosLng = location?.lng ?? location?.longitude ?? null;
+    const sosLat = location?.lat 
+      ?? location?.latitude 
+      ?? null;
+    const sosLng = location?.lng 
+      ?? location?.longitude 
+      ?? null;
     
     const nextState = {
-      trackingActive: false, // DISABLE tracking when SOS active
-      sosStatus: nextSos ? "ACTIVE" : null,
+      trackingActive: !nextSos, // DISABLE tracking when SOS active
+      sosActive: nextSos,
+      sos: nextSos,
       lastUpdate: Date.now(),
       location: location || null
     };
@@ -97,14 +93,15 @@ const setSosState = (busId, sosState, io = null, location = null) => {
     return true;
   }
 
-  // === SOS TRIGGER (active → SOS) ===
+  // === SOS TRIGGER (active → active) ===
   if (nextSos) {
     console.log(`[TRACKING STATE] Bus ${busId}: SOS TRIGGERED - disabling tracking`);
     
     // DISABLE tracking, enable SOS
     const nextState = {
       trackingActive: false,  // STOP tracking
-      sosStatus: "ACTIVE",    // Unified field
+      sosActive: true,
+      sos: true,
       lastUpdate: Date.now(),
       location: location || prevState?.location || null,
       speed: 0
@@ -141,11 +138,12 @@ const setSosState = (busId, sosState, io = null, location = null) => {
     return true;
   }
 
-  // === SOS CLEAR (SOS → normal) ===
+  // === SOS CLEAR (active → inactive) ===
   console.log(`[TRACKING STATE] Bus ${busId}: SOS CLEARED`);
   const nextState = {
     trackingActive: prevState?.trackingActive === true,
-    sosStatus: null,
+    sosActive: false,
+    sos: false,
     lastUpdate: Date.now(),
     location: prevState?.location || null,
     speed: prevState?.speed || 0
@@ -162,67 +160,13 @@ const setSosState = (busId, sosState, io = null, location = null) => {
 };
 
 /**
- * Acknowledge SOS for a bus
- * Changes sosStatus from "ACTIVE" to "ACKNOWLEDGED"
+ * Check if SOS is active for a bus
  * @param {string} busId - Bus identifier
- * @param {object} io - Socket.io instance (optional)
- * @returns {boolean} - true if SOS was acknowledged
- */
-const acknowledgeSos = (busId, io = null) => {
-  const prevState = trackingState.get(busId);
-  
-  if (!prevState || prevState.sosStatus !== "ACTIVE") {
-    console.log(`[TRACKING STATE] Bus ${busId}: Cannot acknowledge - no active SOS`);
-    return false;
-  }
-
-  const nextState = {
-    ...prevState,
-    sosStatus: "ACKNOWLEDGED",
-    lastUpdate: Date.now()
-  };
-  trackingState.set(busId, nextState);
-  console.log(`[TRACKING STATE] Bus ${busId}: SOS ACKNOWLEDGED`);
-
-  if (io) {
-    io.emit("SOS_ACKNOWLEDGED", { 
-      busId, 
-      timestamp: Date.now() 
-    });
-    console.log(`[SOS_ACKNOWLEDGED] Emitted for bus: ${busId}`);
-  }
-
-  return true;
-};
-
-/**
- * Check if SOS is active for a bus (includes both ACTIVE and ACKNOWLEDGED)
- * @param {string} busId - Bus identifier
- * @returns {boolean} - true if SOS is active (any status)
+ * @returns {boolean} - true if SOS is active
  */
 const isSosActive = (busId) => {
   const state = trackingState.get(busId) || {};
-  return state?.sosStatus === "ACTIVE" || state?.sosStatus === "ACKNOWLEDGED";
-};
-
-/**
- * Check if SOS is in ACTIVE state (not yet acknowledged)
- * @param {string} busId - Bus identifier
- * @returns {boolean} - true if SOS is active and not acknowledged
- */
-const isSosActiveOnly = (busId) => {
-  const state = trackingState.get(busId) || {};
-  return state?.sosStatus === "ACTIVE";
-};
-
-/**
- * Check if SOS is acknowledged
- * @param {string} busId - Bus identifier
- * @returns {boolean} - true if SOS is acknowledged
- */
-const isSosAcknowledged = (busId) => {
-  const state = trackingState.get(busId) || {};
-  return state?.sosStatus === "ACKNOWLEDGED";
+  return state?.sos === true;
 };
 
 /**
@@ -321,11 +265,8 @@ const isStateStale = (busId) => {
 module.exports = {
   setTrackingActive,
   setSosState,
-  acknowledgeSos,
   isTrackingActive,
   isSosActive,
-  isSosActiveOnly,
-  isSosAcknowledged,
   getTrackingState,
   hasTrackingState,
   isStateStale,

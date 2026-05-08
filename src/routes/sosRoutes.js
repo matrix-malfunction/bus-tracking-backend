@@ -1,5 +1,5 @@
 const express = require("express");
-const { triggerSos, acknowledgeSos } = require("../controllers/driverFeatureController");
+const { triggerSos } = require("../controllers/driverFeatureController");
 const DriverEmergency = require("../models/DriverEmergency");
 
 console.log("[ROUTE] SOS routes loaded from:", __filename);
@@ -75,8 +75,5 @@ router.get("/status", async (req, res) => {
 });
 
 router.post("/", triggerSos);
-
-// POST /api/sos/ack - Acknowledge SOS (NO role restriction)
-router.post("/ack", acknowledgeSos);
 
 module.exports = router;
