@@ -273,8 +273,10 @@ async function updateLocation(req, res) {
     }
 
     // === UPDATE TRACKING STATE ===
-    // FULL OVERWRITE - no spread operator, prevents stale data merging
+    // Merge with existing state to preserve route metadata
+    const existingBus = trackingState.get(busId) || {};
     trackingState.set(busId, {
+      ...existingBus, // Preserve existing fields (routeId, routeName, etc.)
       busId: busId.trim(),
       lat: numLat,
       lng: numLng,
@@ -284,7 +286,7 @@ async function updateLocation(req, res) {
       trackingActive: true,
       location: { latitude: numLat, longitude: numLng },
     });
-    console.log("[BACKEND] ✅ State updated (FULL OVERWRITE):", busId, "speed:", Math.round(speed), "km/h");
+    console.log("[BACKEND] ✅ State updated (MERGED):", busId, "speed:", Math.round(speed), "km/h", "route:", existingBus.routeId || "none");
     
     return res.json({ 
       success: true, 
