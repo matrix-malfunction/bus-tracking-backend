@@ -370,6 +370,21 @@ async function _updateLocationUnsafe(req, res) {
         stops: routeInfo.stops || []
       } : null);
       
+      // TELEMETRY: Route data before computeBusProgression
+      console.log("[ROUTE TELEMETRY]", {
+        busId,
+        hasActiveRouteInfo: !!activeRouteInfo,
+        routeId: routeForProgression?.routeId || null,
+        hasRouteCoords: !!routeForProgression?.routeCoords,
+        routeCoordsLength: routeForProgression?.routeCoords?.length || 0,
+        firstCoord: routeForProgression?.routeCoords?.[0] || null,
+        lastCoord: routeForProgression?.routeCoords?.[routeForProgression?.routeCoords?.length - 1] || null,
+        hasStops: !!(routeForProgression?.stops && routeForProgression?.stops.length > 0),
+        stopsLength: routeForProgression?.stops?.length || 0,
+        firstStop: routeForProgression?.stops?.[0] || null,
+        source: activeRouteInfo ? "activeRouteInfo" : (routeInfo ? "routeInfo" : "none")
+      });
+      
       if (routeForProgression && routeForProgression.routeCoords) {
         progression = computeBusProgression(
           busId,
