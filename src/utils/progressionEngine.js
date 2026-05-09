@@ -10,7 +10,7 @@ const { getBusProgression, setBusProgression, addSpeedSample, getRollingAverageS
 
 // Hysteresis thresholds
 const MIN_ADVANCEMENT_METERS = 50; // Must advance 50m before updating stop index
-const GPS_JITTER_THRESHOLD_METERS = 20; // Ignore movements less than 20m
+const GPS_JITTER_THRESHOLD_METERS = 15; // Unified threshold: ignore movements less than 15m
 const MIN_SPEED_KMH = 5; // Minimum operational speed for ETA calculation
 
 /**
@@ -144,7 +144,11 @@ function determineStopProgression(projection, routeStops, stopCoords, prevProgre
   // Calculate distance to each stop along route
   const stopDistances = stopCoords.map((coord, index) => {
     // Find closest point on route to this stop
-    const stopProjection = projectOntoRouteCorridor(coord[0], coord[1], [coord]);
+    const stopProjection = projectOntoRouteCorridor(
+      coord[0],
+      coord[1],
+      routeCoordinates
+    );
     return {
       index,
       stopId: routeStops[index],
@@ -363,5 +367,6 @@ module.exports = {
   computeBusProgression,
   hasProgressionChanged,
   projectOntoRouteCorridor,
-  haversineDistance
+  haversineDistance,
+  GPS_JITTER_THRESHOLD_METERS // Export for unified use
 };

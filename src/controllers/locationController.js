@@ -5,7 +5,7 @@ const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
 const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute } = require("../utils/trackingState");
 const routes = require("../../data/routes"); // Route master data
-const { computeBusProgression, hasProgressionChanged } = require("../utils/progressionEngine");
+const { computeBusProgression, hasProgressionChanged, GPS_JITTER_THRESHOLD_METERS } = require("../utils/progressionEngine");
 // Speed comes directly from driver app - no backend recalculation needed
 
 const { chooseBestSource } = require("../services/hybridSourceSelector");
@@ -20,7 +20,8 @@ const MAX_SPEED_KMPH = 80;
 const MIN_SPEED_MPS = 5 / 3.6; // 5 km/h dead-zone filter (~1.39 m/s)
 const STOP_THRESHOLD_METERS = 15;
 const MIN_TIME_DIFF_SEC = 3;
-const JITTER_THRESHOLD_METERS = 8;
+// Use unified GPS jitter threshold from progression engine
+const JITTER_THRESHOLD_METERS = GPS_JITTER_THRESHOLD_METERS;
 
 function logInfo(event, data = {}) {
   console.log(

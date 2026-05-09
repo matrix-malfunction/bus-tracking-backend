@@ -280,6 +280,13 @@ const generateTripId = () => {
  */
 const setBusRoute = (busId, routeData) => {
   const prevState = trackingState.get(busId) || {};
+
+  // Clear progression state if route changed
+  if (prevState.routeId && prevState.routeId !== routeData.routeId) {
+    clearBusProgression(busId);
+    console.log(`[TRACKING STATE] Bus ${busId}: Progression cleared (route switch ${prevState.routeId} → ${routeData.routeId})`);
+  }
+
   const tripId = generateTripId();
   
   const nextState = {
