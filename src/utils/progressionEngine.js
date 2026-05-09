@@ -738,6 +738,34 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     return null;
   }
   
+  // ROUTE HYDRATION: Normalize route coordinates ONCE
+  const normalizedRouteCoords =
+    route?.routeCoords ||
+    route?.coordinates ||
+    [];
+  
+  // Hard validation for route coordinates
+  if (
+    !Array.isArray(normalizedRouteCoords) ||
+    normalizedRouteCoords.length < 2
+  ) {
+    console.log("[ROUTE INVALID]", {
+      busId,
+      routeId: route?.id || route?.routeId || null,
+      hasRouteCoords: !!route?.routeCoords,
+      hasCoordinates: !!route?.coordinates,
+      coordsLength: normalizedRouteCoords?.length || 0
+    });
+    return null;
+  }
+  
+  // Create normalized route object with guaranteed coordinates
+  const normalizedRoute = {
+    ...route,
+    routeCoords: normalizedRouteCoords,
+    coordinates: normalizedRouteCoords // Ensure both properties exist
+  };
+  
   // Get previous progression state
   const prevProgression = getBusProgression(busId);
   
@@ -756,8 +784,8 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   // Convert speed to km/h for display
   const speedKmh = speedMps * 3.6;
   
-  // Project bus position onto route corridor
-  const projection = projectOntoRouteCorridor(busLat, busLng, route.coordinates);
+  // Project bus position onto route corridor (using normalized coordinates)
+  const projection = projectOntoRouteCorridor(busLat, busLng, normalizedRoute.routeCoords);
   
   if (!projection) {
     console.log(`[Progression] Failed to project bus ${busId} onto route`);
@@ -792,8 +820,8 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     }
     
     // DIAGNOSTIC TELEMETRY: Route stops ordering
-    if (route.stops && route.stops.length > 0) {
-      console.log("[ROUTE STOPS]", route.stops.map((s, i) => ({
+    if (normalizedRoute.stops && normalizedRoute.stops.length > 0) {
+      console.log("[ROUTE STOPS]", normalizedRoute.stops.map((s, i) => ({
         index: i,
         id: s,
         name: getStopNameById(s)
@@ -803,7 +831,7 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     // Determine stop progression with GPS accuracy awareness
     const stopProgress = determineStopProgression(
       projection,
-      route.stops,
+      normalizedRoute.stops,
       prevProgression,
       accuracy
     );
@@ -839,8 +867,8 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     const avgSpeedKmh = rollingSpeedKmh;
     
     // Get stop names for display
-    const currentStopId = stopProgress.currentStopIndex >= 0 ? route.stops[stopProgress.currentStopIndex] : null;
-    const nextStopId = stopProgress.nextStopIndex >= 0 ? route.stops[stopProgress.nextStopIndex] : null;
+    const currentStopId = stopProgress.currentStopIndex >= 0 ? normalizedRoute.stops[stopProgress.currentStopIndex] : null;
+    const nextStopId = stopProgress.nextStopIndex >= 0 ? normalizedRoute.stops[stopProgress.nextStopIndex] : null;
     const currentStopName = currentStopId ? getStopNameById(currentStopId) : null;
     const nextStopName = nextStopId ? getStopNameById(nextStopId) : null;
 
@@ -874,7 +902,8 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     totalRouteLength: Math.round(projection.totalRouteLength),
     lastProjectedPoint: projection.projectedPoint,
     lastUpdate: Date.now(),
-    jitterFiltered
+    jitterFiltered,
+    routeCoords: normalizedRoute.routeCoords // Store normalized coords for downstream use
   };
   
   // DIAGNOSTIC TELEMETRY: Progression result
@@ -942,12 +971,57 @@ function hasProgressionChanged(newProgression, oldProgression) {
   return false;
 }
 
+/**
+ * Clear all progression and event state for a bus
+ * Call this on STOP_TRACKING, BUS_OFFLINE, trip change, or direction change
+ * @param {string} busId - Bus identifier
+ */
+function clearBusState(busId) {
+  // Clear progression cache
+  progressionState.delete(busId);
+  
+  // Clear stop event state
+  stopEventState.delete(busId);
+  
+  // Clear ETA state
+  etaState.delete(busId);
+  
+  console.log(`[State Cleanup] Cleared all state for bus ${busId}`);
+}
+
+/**
+ * Clear progression state only (for trip/direction changes)
+ * @param {string} busId - Bus identifier
+ */
+function clearBusProgression(busId) {
+  progressionState.delete(busId);
+  
+  // Also clear event tracking to allow fresh events for new trip
+  const eventState = stopEventState.get(busId);
+  if (eventState) {
+    eventState.lastEventStopId = null;
+    eventState.lastEventType = null;
+    eventState.hasApproached = new Map();
+  }
+  
+  // Reset ETA state for new trip
+  const eta = etaState.get(busId);
+  if (eta) {
+    eta.nextStopId = null;
+    eta.hasApproached = new Map();
+  }
+  
+  console.log(`[State Cleanup] Cleared progression for bus ${busId}`);
+}
+
 module.exports = {
   computeBusProgression,
   hasProgressionChanged,
   projectOntoRouteCorridor,
   snapToRouteCorridor, // Route corridor locking for visual positioning
   onStopEvent, // Stop lifecycle event registration
+  clearBusState, // Full cleanup for offline/disconnect
+  clearBusProgression, // Partial cleanup for trip change
   haversineDistance,
   GPS_JITTER_THRESHOLD_METERS // Export for unified use
 };
