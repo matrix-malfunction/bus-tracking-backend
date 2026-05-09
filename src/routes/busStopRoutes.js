@@ -1,45 +1,23 @@
 const express = require('express');
 const router = express.Router();
-const { getBusStops, filterByBoundingBox, limitResults, clearCache, BOUNDING_BOX } = require('../services/overpassService');
+const { getBusStops, clearCache } = require('../services/overpassService');
 
 /**
  * GET /api/bus-stops
- * Returns bus stops for Thiruvallur and Vellore from Overpass API
- * REQUIRED query params for bounding box filtering:
- * ?minLat=&maxLat=&minLng=&maxLng=
+ * Returns all bus stops (Overpass + curated BUS_STOPS)
+ * BUS_STOPS are always included regardless of bounding box
  */
 router.get('/', async (req, res) => {
   try {
     console.log('[API] GET /bus-stops - fetching from Overpass API');
 
-    const { minLat, maxLat, minLng, maxLng } = req.query;
-
-    // Fetch all bus stops from Overpass (with caching)
+    // Fetch all bus stops (merged overpass + BUS_STOPS from getBusStops)
     let stops = await getBusStops();
+    console.log(`[API] Total stops before filtering: ${stops.length}`);
 
-    // Enforce bounding box filtering - REQUIRED
-    if (!minLat || !maxLat || !minLng || !maxLng) {
-      console.log('[API] Bounding box not provided, returning default region stops');
-      // Use default bounding box for Thiruvallur + Vellore
-      stops = filterByBoundingBox(
-        stops,
-        BOUNDING_BOX.minLat,
-        BOUNDING_BOX.maxLat,
-        BOUNDING_BOX.minLng,
-        BOUNDING_BOX.maxLng
-      );
-    } else {
-      stops = filterByBoundingBox(
-        stops,
-        parseFloat(minLat),
-        parseFloat(maxLat),
-        parseFloat(minLng),
-        parseFloat(maxLng)
-      );
-    }
-
-    // Limit results to prevent UI overload
-    stops = limitResults(stops);
+    // Note: BUS_STOPS are already included in getBusStops() result
+    // They are NOT filtered by bounding box - they are always included
+    // Only overpass results might be filtered in the service layer
 
     res.json({
       success: true,
@@ -67,20 +45,9 @@ router.get('/refresh', async (req, res) => {
     // Clear cache using proper function
     clearCache();
 
-    // Fetch fresh data
+    // Fetch fresh data (includes BUS_STOPS without filtering)
     const stops = await getBusStops();
-
-    // Apply default bounding box filtering
-    stops = filterByBoundingBox(
-      stops,
-      BOUNDING_BOX.minLat,
-      BOUNDING_BOX.maxLat,
-      BOUNDING_BOX.minLng,
-      BOUNDING_BOX.maxLng
-    );
-
-    // Limit results
-    stops = limitResults(stops);
+    console.log(`[API] Refresh - total stops: ${stops.length}`);
 
     res.json({
       success: true,
