@@ -431,10 +431,23 @@ function limitResults(stops, limit = MAX_RESULTS) {
   return stops.slice(0, limit);
 }
 
+// Combine all stops for lookup
+const ALL_STOPS = [...BUS_STOPS, ...CUSTOM_STOPS];
+
+// Create stop name lookup map
+const stopNameMap = new Map(ALL_STOPS.map(s => [s.id, s.name]));
+
+// Get stop name by ID
+const getStopNameById = (stopId) => stopNameMap.get(stopId) || null;
+
 module.exports = {
   getBusStops,
   filterByBoundingBox,
   limitResults,
   clearCache,
-  BOUNDING_BOX
+  BOUNDING_BOX,
+  BUS_STOPS,
+  CUSTOM_STOPS,
+  ALL_STOPS,
+  getStopNameById
 };

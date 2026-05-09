@@ -1,70 +1,4 @@
-// Stop name mapping for stop ID to name resolution
-const STOP_NAMES = {
-  "custom_stop_117": "Vellore Mofussil Bus Terminus",
-  "custom_stop_144": "Vellore Fort Main Gate",
-  "custom_stop_137": "Vellore Fort Terminus",
-  "custom_stop_113": "Raja Theatre Bus Stop",
-  "custom_stop_116": "CMC Bus Stop",
-  "custom_stop_115": "Staff Bus Stop (IDA Scudder Rd)",
-  "custom_stop_138": "Infantry Road Stop",
-  "custom_stop_140": "Vellore Cantonment Station",
-  "custom_stop_114": "Thottapalayam Area Bus Stop",
-  "custom_stop_141": "Thottapalayam Bypass",
-  "custom_stop_139": "Kagithapatarai Bypass",
-  "sathuvachari_p2": "Sathuvachari Bus Stop (Phase 2)",
-  "custom_stop_111": "Kangeyanallur Bus Stop",
-  "custom_stop_142": "Thangal VIT Area",
-  "katpadi_junction": "Katpadi Junction Bus Stop",
-  "katpadi_main": "Katpadi Bus Stand (Main)",
-  "arcot_bypass_vlr": "Arcot Bypass (Towards Vellore)",
-  "arcot_bypass_town": "Arcot Bypass (Town side)",
-  "arcot_busstand": "Arcot Bus Stand",
-  "periyar_nagar": "Periyar Nagar Bus Stop",
-  "thopukkana": "Thopukkana Bus Stop",
-  "kannamangalam": "Kannamangalam Koot Road Bus Stop",
-  "anna_nagar": "Anna Nagar Bus Stop",
-  "navalpur": "Navalpur Bus Stop",
-  "karai_kutroad": "Karai Kutroad Bus Stop",
-  "muthukadai": "Muthukadai Bus Stop (Ranipet)",
-  "ranipet_new": "Ranipet New Bus Stand",
-  "ranipet_bypass": "Ranipet Bypass",
-  "walajapet": "Walajapet Bus Stand",
-  "custom_stop_121": "Pernambut Bus Stand",
-  "vaniyambadi_bypass": "Vaniyambadi Bypass Bus Stop",
-  "vaniyambadi": "Vaniyambadi Bus Stand",
-  "ambur": "Ambur Bus Stand",
-  "custom_stop_143": "Ponnai Bus Stop",
-  "sholinghur_depot": "Sholinghur Bus Depot",
-  "sholinghur_new": "Sholinghur Bus Stand (New)",
-  "bagayam": "Bagayam Bus Stop",
-  "sathuvachari_tnhb": "Sathuvachari Bus Stop (TNHB)",
-  "alamelumangapuram": "Alamelumangapuram Bus Stop",
-  "custom_stop_112": "Anaicut New Bus Stand",
-  "custom_stop_120": "Tirupattur Pudupattai Road",
-  "custom_stop_119": "Tirupattur Old Bus Stand",
-  "custom_stop_118": "Tirupattur Bus Stand",
-  "custom_stop_135": "Women's Prison",
-  "custom_stop_134": "Vellore Men's Jail",
-  "custom_stop_136": "Golden Temple Gate",
-  "katpadi_chittoor": "Katpadi Junction – Chittoor Bus Stand",
-  "bhel": "BHEL Bus Stop (Walajapet Road)",
-  "custom_tvl_ext_001": "Thiruvallur Bus Stand",
-  "custom_tvl_ext_002": "Thiruvallur Terminal",
-  "custom_tvl_ext_004": "Theradi Bus Stop",
-  "custom_tvl_ext_005": "Thiruvallur Court Bus Stop",
-  "custom_tvl_ext_009": "SBI Bus Stop (JN Road)",
-  "custom_tvl_004": "Poonamallee Municipality / Kumananchavadi",
-  "custom_tvl_003": "Poonamallee Bypass (Near Bus Depot)",
-  "custom_tvl_002": "Poonamallee Bypass",
-  "custom_tvl_001": "Poonamallee Bus Stand",
-  "custom_tvl_005": "BSNL Exchange Bus Stop (Poonamallee)",
-  "custom_tvl_007": "Avadi Check Post",
-  "custom_tvl_008": "Avadi Market Bus Stop",
-  "custom_tvl_006": "Avadi Bus Stand"
-};
-
-module.exports = {
-  routes: [
+module.exports = [
 
   // ─────────────────────────────────────────────
   // VELLORE DISTRICT ROUTES (most common first)
@@ -450,10 +384,4 @@ module.exports = {
     ]
   }
 
-  ],
-  STOP_NAMES
-};
-
-// For backward compatibility, export routes directly
-module.exports.routes = module.exports.routes;
-module.exports.STOP_NAMES = STOP_NAMES;
+];

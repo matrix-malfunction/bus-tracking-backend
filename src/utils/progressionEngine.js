@@ -5,8 +5,9 @@
  * Projects bus position onto route corridor and computes stop progression.
  */
 
-const { routes, STOP_NAMES } = require("../../data/routes");
+const routes = require("../../data/routes");
 const { getBusProgression, setBusProgression, addSpeedSample, getRollingAverageSpeed } = require("./trackingState");
+const { getStopNameById } = require("../services/overpassService");
 
 // Hysteresis thresholds
 const MIN_ADVANCEMENT_METERS = 50; // Must advance 50m before updating stop index
@@ -297,26 +298,24 @@ function computeBusProgression(busId, busLat, busLng, speedKmh) {
     // Calculate ETA
     const { etaMinutes, avgSpeedKmh } = calculateETA(remainingDistanceKm, busId);
     
-    // Map stop IDs to names
+    // Get stop names for display
     const currentStopId = stopProgress.currentStopIndex >= 0 ? route.stops[stopProgress.currentStopIndex] : null;
     const nextStopId = stopProgress.nextStopIndex >= 0 ? route.stops[stopProgress.nextStopIndex] : null;
-    const currentStopName = currentStopId ? (STOP_NAMES[currentStopId] || currentStopId) : null;
-    const nextStopName = nextStopId ? (STOP_NAMES[nextStopId] || nextStopId) : null;
+    const currentStopName = currentStopId ? getStopNameById(currentStopId) : null;
+    const nextStopName = nextStopId ? getStopNameById(nextStopId) : null;
 
-    // Build progression result with stop names
+    // Build progression result
     const progression = {
       busId,
       tripId: state.tripId,
       routeId: state.routeId,
+      currentStopIndex: stopProgress.currentStopIndex,
       currentStopId,
       currentStopName,
+      nextStopIndex: stopProgress.nextStopIndex,
       nextStopId,
       nextStopName,
-      currentStopIndex: stopProgress.currentStopIndex,
-      nextStopIndex: stopProgress.nextStopIndex,
       passedStopIds: stopProgress.passedStopIds,
-      completedStops: stopProgress.currentStopIndex + 1,
-      routeProgressIndex: stopProgress.currentStopIndex,
       remainingDistanceKm: Math.round(remainingDistanceKm * 100) / 100,
       progressPercent,
       etaMinutes,
