@@ -24,8 +24,14 @@ function registerSocketHandlers(io) {
       socketId: socket.id,
     });
     
-    // Emit bus stops on connection
+    // Emit bus stops on connection (for early clients)
     emitBusStops(socket);
+    
+    // Listen for explicit request from client (reliable delivery)
+    socket.on("REQUEST_BUS_STOPS", async () => {
+      console.log(`[Socket] REQUEST_BUS_STOPS received from ${socket.id}`);
+      await emitBusStops(socket);
+    });
   });
 }
 
