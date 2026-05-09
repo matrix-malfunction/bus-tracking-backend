@@ -341,6 +341,90 @@ const clearBusRoute = (busId) => {
   console.log(`[TRACKING STATE] Bus ${busId}: Route cleared (shift ended)`);
 };
 
+/**
+ * Set progression state for a bus trip
+ * @param {string} busId - Bus identifier
+ * @param {object} progression - { currentStopIndex, nextStopIndex, passedStopIds, cumulativeDistance, remainingDistanceKm, progressPercent, etaMinutes, speedSamples }
+ */
+const setBusProgression = (busId, progression) => {
+  const prevState = trackingState.get(busId) || {};
+  
+  const nextState = {
+    ...prevState,
+    progression: {
+      ...prevState.progression,
+      ...progression,
+      lastUpdate: Date.now(),
+    },
+    lastUpdate: Date.now(),
+  };
+  
+  trackingState.set(busId, nextState);
+};
+
+/**
+ * Get progression state for a bus
+ * @param {string} busId - Bus identifier
+ * @returns {object|null} - Progression data or null
+ */
+const getBusProgression = (busId) => {
+  const state = trackingState.get(busId);
+  return state?.progression || null;
+};
+
+/**
+ * Clear progression state for a bus
+ * @param {string} busId - Bus identifier
+ */
+const clearBusProgression = (busId) => {
+  const prevState = trackingState.get(busId);
+  if (!prevState) return;
+  
+  const nextState = {
+    ...prevState,
+    progression: null,
+    lastUpdate: Date.now(),
+  };
+  
+  trackingState.set(busId, nextState);
+  console.log(`[TRACKING STATE] Bus ${busId}: Progression cleared`);
+};
+
+/**
+ * Add speed sample for rolling average calculation
+ * @param {string} busId - Bus identifier
+ * @param {number} speed - Speed in km/h
+ * @returns {number[]} - Updated speed samples array
+ */
+const addSpeedSample = (busId, speed) => {
+  const prevState = trackingState.get(busId) || {};
+  const progression = prevState.progression || {};
+  
+  // Keep last 10 speed samples for rolling average
+  const samples = progression.speedSamples || [];
+  samples.push(speed);
+  if (samples.length > 10) samples.shift();
+  
+  setBusProgression(busId, { speedSamples: samples });
+  return samples;
+};
+
+/**
+ * Calculate rolling average speed
+ * @param {string} busId - Bus identifier
+ * @returns {number} - Average speed in km/h
+ */
+const getRollingAverageSpeed = (busId) => {
+  const progression = getBusProgression(busId);
+  if (!progression?.speedSamples || progression.speedSamples.length === 0) {
+    return 15; // Default fallback speed (15 km/h)
+  }
+  
+  const samples = progression.speedSamples;
+  const sum = samples.reduce((a, b) => a + b, 0);
+  return sum / samples.length;
+};
+
 module.exports = {
   setTrackingActive,
   setSosState,

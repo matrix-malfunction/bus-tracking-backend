@@ -5,6 +5,7 @@ const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
 const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute } = require("../utils/trackingState");
 const routes = require("../../data/routes"); // Route master data
+const { computeBusProgression, hasProgressionChanged } = require("../utils/progressionEngine");
 // Speed comes directly from driver app - no backend recalculation needed
 
 const { chooseBestSource } = require("../services/hybridSourceSelector");
@@ -244,6 +245,21 @@ async function updateLocation(req, res) {
       console.log("[BACKEND] Speed filtered to 0 (below 5 km/h threshold)");
     }
 
+    // === COMPUTE PROGRESSION ===
+    let progression = null;
+    if (numLat && numLng && speed !== undefined) {
+      progression = computeBusProgression(busId, numLat, numLng, speed);
+      if (progression) {
+        console.log("[BACKEND] Progression computed:", {
+          busId,
+          currentStop: progression.currentStopIndex,
+          nextStop: progression.nextStopIndex,
+          progress: progression.progressPercent + "%",
+          eta: progression.etaMinutes + "min"
+        });
+      }
+    }
+
     // === SOCKET EMIT ===
     if (io && busId && Number.isFinite(numLat) && Number.isFinite(numLng)) {
       // Check if bus has route assignment
@@ -275,6 +291,30 @@ async function updateLocation(req, res) {
 
       io.emit("BUS_LOCATION_UPDATE", emitPayload);
       console.log("[BACKEND] ✅ Socket event emitted");
+      
+      // === EMIT PROGRESSION UPDATE (if changed) ===
+      if (progression) {
+        const prevProgression = trackingState.get(busId)?.progression;
+        if (hasProgressionChanged(progression, prevProgression)) {
+          const progressEmitPayload = {
+            busId: busId.trim(),
+            tripId: progression.tripId,
+            routeId: progression.routeId,
+            currentStopIndex: progression.currentStopIndex,
+            nextStopIndex: progression.nextStopIndex,
+            passedStopIds: progression.passedStopIds,
+            remainingDistanceKm: progression.remainingDistanceKm,
+            progressPercent: progression.progressPercent,
+            etaMinutes: progression.etaMinutes,
+            avgSpeedKmh: progression.avgSpeedKmh
+          };
+          
+          console.log("[BACKEND] 📡 Emitting BUS_PROGRESS_UPDATE:", progressEmitPayload);
+          io.emit("BUS_PROGRESS_UPDATE", progressEmitPayload);
+        } else {
+          console.log("[BACKEND] ⏭️ Progression unchanged, skipping emit");
+        }
+      }
     } else {
       console.log("[BACKEND] ⚠️ Socket emit skipped - invalid data");
     }
