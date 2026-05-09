@@ -59,7 +59,11 @@ function getStopCoordsById(stopId) {
  * @returns {{snappedLat: number, snappedLng: number, distanceFromRoute: number} | null}
  */
 function snapToRouteCorridor(lat, lng, routeCoords) {
-  if (!routeCoords || routeCoords.length < 2 || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+  // Defensive validation - never throw, always return null on invalid input
+  if (!routeCoords || !Array.isArray(routeCoords) || routeCoords.length < 2) {
+    return null;
+  }
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return null;
   }
   
@@ -67,22 +71,55 @@ function snapToRouteCorridor(lat, lng, routeCoords) {
   let snappedPoint = null;
   let snappedSegmentIndex = -1;
   
-  // Find nearest segment
+  // Find nearest segment with defensive validation
   for (let i = 0; i < routeCoords.length - 1; i++) {
     const segmentStart = routeCoords[i];
     const segmentEnd = routeCoords[i + 1];
     
-    const projection = projectPointOntoSegment(
-      [lat, lng],
-      segmentStart,
-      segmentEnd
-    );
+    // Validate segment structure
+    if (!Array.isArray(segmentStart) || !Array.isArray(segmentEnd)) {
+      continue;
+    }
+    if (segmentStart.length < 2 || segmentEnd.length < 2) {
+      continue;
+    }
+    if (!Number.isFinite(segmentStart[0]) || !Number.isFinite(segmentStart[1]) ||
+        !Number.isFinite(segmentEnd[0]) || !Number.isFinite(segmentEnd[1])) {
+      continue;
+    }
     
-    if (projection && projection.distance < minDistance) {
+    // Defensive: catch any math errors in projection
+    let projection = null;
+    try {
+      projection = projectPointOntoSegment(
+        [lat, lng],
+        segmentStart,
+        segmentEnd
+      );
+    } catch (err) {
+      // Skip this segment if projection fails
+      continue;
+    }
+    
+    if (projection && projection.distance < minDistance && 
+        Number.isFinite(projection.distance) &&
+        Array.isArray(projection.point) &&
+        Number.isFinite(projection.point[0]) &&
+        Number.isFinite(projection.point[1])) {
       minDistance = projection.distance;
       snappedPoint = projection.point;
       snappedSegmentIndex = i;
     }
+  }
+  
+  // Validate final snapped coordinates before returning
+  if (!snappedPoint || !Array.isArray(snappedPoint) || snappedPoint.length < 2) {
+    return null;
+  }
+  const snappedLat = snappedPoint[0];
+  const snappedLng = snappedPoint[1];
+  if (!Number.isFinite(snappedLat) || !Number.isFinite(snappedLng)) {
+    return null;
   }
   
   // Hard cutoff: beyond 150m, no snapping at all

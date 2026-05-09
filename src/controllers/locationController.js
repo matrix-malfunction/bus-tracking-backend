@@ -254,39 +254,52 @@ async function updateLocation(req, res) {
 
     // === COMPUTE PROGRESSION ===
     let progression = null;
-    if (numLat && numLng && speed !== undefined) {
-      progression = computeBusProgression(busId, numLat, numLng, speed, accuracy);
-      if (progression) {
-        console.log("[BACKEND] Progression computed:", {
-          busId,
-          currentStop: progression.currentStopIndex,
-          nextStop: progression.nextStopIndex,
-          progress: progression.progressPercent + "%",
-          eta: progression.etaMinutes + "min"
-        });
+    try {
+      if (numLat && numLng && speed !== undefined) {
+        progression = computeBusProgression(busId, numLat, numLng, speed, accuracy);
+        if (progression) {
+          console.log("[BACKEND] Progression computed:", {
+            busId,
+            currentStop: progression.currentStopIndex,
+            nextStop: progression.nextStopIndex,
+            progress: progression.progressPercent + "%",
+            eta: progression.etaMinutes + "min"
+          });
+        }
       }
+    } catch (error) {
+      // CRITICAL: Never let progression failures break tracking
+      console.error("[Progression] Failed for bus", busId, ":", error.message);
+      progression = null;
     }
 
     // === ROUTE SNAPPING (Corridor Locking) ===
     // Calculate snapped coordinates for professional AVL-style rendering
+    // CRITICAL: This is an optional enhancement - tracking must continue even if snapping fails
     let snappedCoords = null;
     const routeInfo = getBusRoute(busId);
     const routeData = routeInfo ? routes.find(r => r.id === routeInfo.routeId) : null;
     const routeCoords = routeData?.coordinates || null;
     
     if (routeCoords && routeCoords.length >= 2) {
-      // Import snapToRouteCorridor from progressionEngine
-      const { snapToRouteCorridor } = require("../utils/progressionEngine");
-      snappedCoords = snapToRouteCorridor(numLat, numLng, routeCoords);
-      
-      if (snappedCoords) {
-        console.log("[BACKEND] Route snapping:", {
-          busId,
-          raw: [numLat, numLng],
-          snapped: [snappedCoords.snappedLat, snappedCoords.snappedLng],
-          distanceFromRoute: Math.round(snappedCoords.distanceFromRoute),
-          isSoftSnap: snappedCoords.isSoftSnap || false
-        });
+      try {
+        // Import snapToRouteCorridor from progressionEngine
+        const { snapToRouteCorridor } = require("../utils/progressionEngine");
+        snappedCoords = snapToRouteCorridor(numLat, numLng, routeCoords);
+        
+        if (snappedCoords) {
+          console.log("[BACKEND] Route snapping:", {
+            busId,
+            raw: [numLat, numLng],
+            snapped: [snappedCoords.snappedLat, snappedCoords.snappedLng],
+            distanceFromRoute: Math.round(snappedCoords.distanceFromRoute),
+            isSoftSnap: snappedCoords.isSoftSnap || false
+          });
+        }
+      } catch (error) {
+        // CRITICAL: Never let snapping failures break the tracking pipeline
+        console.error("[Route Snap] Failed for bus", busId, ":", error.message);
+        snappedCoords = null;
       }
     }
 
