@@ -151,11 +151,12 @@ const BUS_STOPS = [
  * Uses precise bounding box to limit results
  */
 async function fetchBusStopsFromOverpass() {
-  const query = `[out:json][timeout:25];
-  (
-    node["highway"="bus_stop"](${BOUNDING_BOX.minLat},${BOUNDING_BOX.minLng},${BOUNDING_BOX.maxLat},${BOUNDING_BOX.maxLng});
-  );
-  out;`;
+  const query = `[out:json][timeout:60];
+(
+  node["highway"="bus_stop"](${BOUNDING_BOX.minLat},${BOUNDING_BOX.minLng},${BOUNDING_BOX.maxLat},${BOUNDING_BOX.maxLng});
+);
+out body;`;
+  console.log('[Overpass] Query bbox:', BOUNDING_BOX);
 
   return new Promise((resolve, reject) => {
     const options = {
@@ -256,22 +257,20 @@ async function getBusStops() {
   } catch (error) {
     console.error('[Overpass] Error fetching bus stops:', error.message);
 
-    // Fallback: Use expired cache + BUS_STOPS (never return BUS_STOPS alone)
+    // Always try to return cached data if available (contains merged overpass + BUS_STOPS)
     if (cache.data) {
-      console.log('[Overpass] Using expired cache + BUS_STOPS as fallback');
+      console.log('[Overpass] Using cached merged data as fallback');
       const expiredStops = cache.data;
-      const curatedOnly = expiredStops.filter(s => s.id && !/^\d+$/.test(s.id));
-      const overpassFromCache = expiredStops.filter(s => s.id && /^\d+$/.test(s.id));
-      console.log(`[Overpass] Cache contains: ${overpassFromCache.length} overpass + ${curatedOnly.length} curated`);
-      
-      // Return expired cache (already merged)
+      const overpassCount = expiredStops.filter(s => s.id && /^\d+$/.test(s.id)).length;
+      const customCount = expiredStops.filter(s => s.id && s.id.startsWith('custom_')).length;
+      console.log(`[Overpass] Cache has ${overpassCount} overpass + ${customCount} custom stops`);
       return expiredStops;
     }
 
-    // No cache available - this means we have NO overpass stops
-    // Return empty array + BUS_STOPS to maintain consistent structure
-    console.error('[Overpass] CRITICAL: No cache and Overpass failed. Returning BUS_STOPS only.');
-    console.error('[Overpass] Original Overpass stops will be MISSING from dataset');
+    // No cache - we cannot get overpass stops
+    // Log critical error but still return BUS_STOPS so app doesn't break completely
+    console.error('[Overpass] CRITICAL: No cache and Overpass failed');
+    console.error('[Overpass] Returning BUS_STOPS only - original stops MISSING');
     return BUS_STOPS;
   }
 }
