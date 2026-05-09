@@ -985,19 +985,15 @@ function calculateETA(remainingDistanceKm, busId) {
  */
 function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy) {
   try {
-    // ENTRY TELEMETRY
+    // ENTRY TELEMETRY (as requested)
     console.log("[COMPUTE ENTRY]", {
       busId,
-      lat: busLat,
-      lng: busLng,
       hasRoute: !!route,
-      routeId: route?.routeId || route?.id || null,
       hasRouteCoords: !!route?.routeCoords,
-      coordCount: route?.routeCoords?.length || 0,
-      hasCoordinates: !!route?.coordinates,
-      coordCount2: route?.coordinates?.length || 0,
+      routeCoordsLength: route?.routeCoords?.length || 0,
+      firstCoord: route?.routeCoords?.[0] || null,
       hasStops: !!route?.stops,
-      stopCount: route?.stops?.length || 0
+      stopsLength: route?.stops?.length || 0
     });
     
     // Validate inputs
@@ -1053,10 +1049,12 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   // Convert speed to km/h for display
   const speedKmh = speedMps * 3.6;
   
-  // Telemetry before projection invocation
-  console.log("[COMPUTE]", "CALLING_PROJECTION", {
+  // Telemetry before projection (normalized coords)
+  console.log("[BEFORE PROJECTION]", {
     busId,
-    coordCount: normalizedRoute.routeCoords.length
+    normalizedRouteCoordsLength: normalizedRoute.routeCoords.length,
+    firstNormalizedCoord: normalizedRoute.routeCoords[0] || null,
+    lastNormalizedCoord: normalizedRoute.routeCoords[normalizedRoute.routeCoords.length - 1] || null
   });
   
   // Project bus position onto route corridor (using normalized coordinates)

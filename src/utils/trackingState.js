@@ -322,7 +322,18 @@ const setBusRoute = (busId, routeData) => {
  */
 const getBusRoute = (busId) => {
   const state = trackingState.get(busId);
-  if (!state || !state.routeId) return null;
+  if (!state || !state.routeId) {
+    console.log("[ROUTE CACHE GET]", { busId, hasState: !!state, hasRouteId: !!(state?.routeId), result: null });
+    return null;
+  }
+  
+  // TELEMETRY: Route cache getter
+  console.log("[ROUTE CACHE GET]", {
+    busId,
+    routeId: state.routeId,
+    coordLength: state.routeCoords?.length || 0,
+    hasCoords: !!(state.routeCoords && state.routeCoords.length > 0)
+  });
   
   return {
     routeId: state.routeId,
@@ -331,6 +342,8 @@ const getBusRoute = (busId) => {
     direction: state.direction,
     tripId: state.tripId,
     currentStopIndex: state.currentStopIndex,
+    routeCoords: state.routeCoords,
+    stops: state.stops
   };
 };
 
