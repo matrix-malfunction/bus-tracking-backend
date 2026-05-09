@@ -195,6 +195,9 @@ async function updateLocation(req, res) {
 }
 
 async function _updateLocationUnsafe(req, res) {
+  // FLOW TELEMETRY STEP 1: Controller entry
+  console.log("[FLOW] STEP 1 - Controller entry");
+  
   // Log immediately upon entry - confirms controller is reached
   console.log("[BACKEND] ========== LOCATION UPDATE ==========");
   console.log("[BACKEND] req.body:", JSON.stringify(req.body, null, 2));
@@ -288,6 +291,9 @@ async function _updateLocationUnsafe(req, res) {
       return res.status(400).json({ error: "Lat/lng out of valid range" });
     }
     
+    // FLOW TELEMETRY STEP 2: After validation
+    console.log("[FLOW] STEP 2 - Validation passed");
+    
     // === UPDATE DATABASE ===
     let updated;
     try {
@@ -338,6 +344,9 @@ async function _updateLocationUnsafe(req, res) {
       };
     }
     
+    // FLOW TELEMETRY STEP 4: After DB update
+    console.log("[FLOW] STEP 4 - After DB update");
+    
     // === USE DRIVER-COMPUTED SPEED (Single Source of Truth) ===
     // Backend does NOT recalculate - uses speed from driver app
     const rawDriverSpeed = Number(driverSpeed) || 0;
@@ -369,7 +378,7 @@ async function _updateLocationUnsafe(req, res) {
         routeCoords: routeInfo.routeCoords,
         stops: routeInfo.stops || []
       } : null);
-      
+
       // TELEMETRY: Route data before computeBusProgression
       console.log("[ROUTE TELEMETRY]", {
         busId,
@@ -384,7 +393,10 @@ async function _updateLocationUnsafe(req, res) {
         firstStop: routeForProgression?.stops?.[0] || null,
         source: activeRouteInfo ? "activeRouteInfo" : (routeInfo ? "routeInfo" : "none")
       });
-      
+
+      // FLOW TELEMETRY STEP 5: Before computeBusProgression
+      console.log("[FLOW] STEP 5 - Before computeBusProgression");
+
       if (routeForProgression && routeForProgression.routeCoords) {
         progression = computeBusProgression(
           busId,
@@ -395,7 +407,7 @@ async function _updateLocationUnsafe(req, res) {
           accuracy
         );
       }
-      
+
       if (progression) {
         console.log("[LOCATION]", "COMPUTE_RESPONSE", {
           busId,
@@ -415,6 +427,9 @@ async function _updateLocationUnsafe(req, res) {
       // Progression failure is non-fatal - continue tracking
       progression = null;
     }
+    
+    // FLOW TELEMETRY STEP 6: After computeBusProgression
+    console.log("[FLOW] STEP 6 - After computeBusProgression");
 
     // === ROUTE SNAPPING (Corridor Locking) ===
     // Calculate snapped coordinates for professional AVL-style rendering
@@ -590,6 +605,9 @@ async function _updateLocationUnsafe(req, res) {
       console.error("[BACKEND] ⚠️ Socket emit failed:", emitError.message);
       // Non-fatal: continue tracking even if emit fails
     }
+    
+    // FLOW TELEMETRY STEP 7: Before response
+    console.log("[FLOW] STEP 7 - Before response");
 
     // === UPDATE TRACKING STATE ===
     // Merge with existing state to preserve route metadata
@@ -606,6 +624,9 @@ async function _updateLocationUnsafe(req, res) {
       location: { latitude: numLat, longitude: numLng },
     });
     console.log("[BACKEND] ✅ State updated (MERGED):", busId, "speed:", Math.round(speed), "km/h", "route:", existingBus.routeId || "none");
+    
+    // FLOW TELEMETRY STEP 8: Response sent
+    console.log("[FLOW] STEP 8 - Response sent");
     
     return res.json({ 
       success: true, 
