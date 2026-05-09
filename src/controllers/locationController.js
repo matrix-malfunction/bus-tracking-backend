@@ -265,6 +265,13 @@ async function updateLocation(req, res) {
         })
       };
       console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", emitPayload);
+      console.log("[ROUTE EMIT]", {
+        busId: emitPayload.busId,
+        routeId: emitPayload.routeId,
+        routeName: emitPayload.routeName,
+        direction: emitPayload.direction,
+        tripId: emitPayload.tripId,
+      });
 
       io.emit("BUS_LOCATION_UPDATE", emitPayload);
       console.log("[BACKEND] ✅ Socket event emitted");
@@ -679,7 +686,9 @@ const startTracking = async (req, res) => {
     console.log("[BACKEND] ========== START TRACKING ==========");
     console.log("[BACKEND] req.body:", req.body);
     
-    const { busId, lat, lng, routeId, direction } = req.body;
+    const { busId, lat, lng, routeId, routeName, routeColor, direction } = req.body;
+    
+    console.log("[BACKEND START_TRACKING BODY]", { busId, routeId, routeName, routeColor, direction });
     if (!busId) {
       console.log("[BACKEND] ❌ Missing busId");
       return res.status(400).json({ error: "busId required" });
@@ -705,8 +714,8 @@ const startTracking = async (req, res) => {
       
       routeData = {
         routeId: route.id,
-        routeName: route.name,
-        routeColor: route.color,
+        routeName: routeName || route.name,  // Use request body value or fallback to route file
+        routeColor: routeColor || route.color,  // Use request body value or fallback to route file
         direction: direction
       };
       
@@ -721,6 +730,17 @@ const startTracking = async (req, res) => {
       assignedRoute = setBusRoute(busId, routeData);
       console.log("[BACKEND] Route assigned:", assignedRoute.tripId);
     }
+    
+    // Verify tracking state storage
+    const storedState = trackingState.get(busId);
+    console.log("[TRACKING STATE STORED]", {
+      busId,
+      routeId: storedState?.routeId,
+      routeName: storedState?.routeName,
+      routeColor: storedState?.routeColor,
+      direction: storedState?.direction,
+      tripId: storedState?.tripId,
+    });
     
     const io = req.app.get("io");
     
@@ -743,6 +763,13 @@ const startTracking = async (req, res) => {
           })
         };
         console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE on start:", emitPayload);
+        console.log("[ROUTE EMIT]", {
+          busId: emitPayload.busId,
+          routeId: emitPayload.routeId,
+          routeName: emitPayload.routeName,
+          direction: emitPayload.direction,
+          tripId: emitPayload.tripId,
+        });
         io.emit("BUS_LOCATION_UPDATE", emitPayload);
       }
     }
