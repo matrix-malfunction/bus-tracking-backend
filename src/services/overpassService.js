@@ -215,6 +215,23 @@ const BUS_STOPS = [
   { id: "custom_tvl_ext_010", name: "Poonamallee Bus Stand", lat: 13.0517, lng: 80.0948 }
 ];
 
+// Production-safe: Ensure arrays exist before spreading
+const ALL_STOPS = [
+  ...(Array.isArray(BUS_STOPS) ? BUS_STOPS : []),
+  ...(Array.isArray(CUSTOM_STOPS) ? CUSTOM_STOPS : [])
+];
+
+// Production-safe stop name lookup map with normalized string IDs
+const STOP_NAME_MAP = new Map(
+  ALL_STOPS.map(stop => [String(stop.id), stop.name])
+);
+
+// Get stop name by ID with safe normalization
+function getStopNameById(stopId) {
+  if (!stopId) return null;
+  return STOP_NAME_MAP.get(String(stopId)) || null;
+}
+
 /**
  * Fetch bus stops from Overpass API for Thiruvallur and Vellore region
  * Uses precise bounding box to limit results
@@ -431,15 +448,7 @@ function limitResults(stops, limit = MAX_RESULTS) {
   return stops.slice(0, limit);
 }
 
-// Combine all stops for lookup
-const ALL_STOPS = [...BUS_STOPS, ...CUSTOM_STOPS];
-
-// Create stop name lookup map
-const stopNameMap = new Map(ALL_STOPS.map(s => [s.id, s.name]));
-
-// Get stop name by ID
-const getStopNameById = (stopId) => stopNameMap.get(stopId) || null;
-
+// Export all stops and lookup function
 module.exports = {
   getBusStops,
   filterByBoundingBox,
