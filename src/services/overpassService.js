@@ -5,6 +5,14 @@
 
 const https = require('https');
 
+// Try to use axios if available for more reliable HTTP requests
+let axios;
+try {
+  axios = require('axios');
+} catch (e) {
+  axios = null;
+}
+
 // Cache configuration
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 const MAX_RESULTS = 500; // Limit results to prevent UI overload
@@ -151,13 +159,42 @@ const BUS_STOPS = [
  * Uses precise bounding box to limit results
  */
 async function fetchBusStopsFromOverpass() {
+  // Use static bbox as requested: 12.0,78.0,13.5,80.5
   const query = `[out:json][timeout:60];
 (
-  node["highway"="bus_stop"](${BOUNDING_BOX.minLat},${BOUNDING_BOX.minLng},${BOUNDING_BOX.maxLat},${BOUNDING_BOX.maxLng});
+  node["highway"="bus_stop"](12.0,78.0,13.5,80.5);
 );
 out body;`;
-  console.log('[Overpass] Query bbox:', BOUNDING_BOX);
+  console.log('[Overpass] Query with static bbox: 12.0,78.0,13.5,80.5');
 
+  // Try axios first if available (more reliable)
+  if (axios) {
+    try {
+      console.log('[Overpass] Using axios for request');
+      const response = await axios.post(
+        'https://overpass-api.de/api/interpreter',
+        `data=${encodeURIComponent(query)}`,
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json'
+          },
+          timeout: 65000
+        }
+      );
+      const elements = response.data?.elements || [];
+      console.log(`[Overpass] Axios response: ${response.status}, elements: ${elements.length}`);
+      if (elements.length === 0) {
+        console.warn('[Overpass] WARNING: Empty elements array from Overpass');
+      }
+      return response.data;
+    } catch (axiosError) {
+      console.error('[Overpass] Axios request failed:', axiosError.message);
+      console.log('[Overpass] Falling back to native https');
+    }
+  }
+
+  // Fallback to native https
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'overpass-api.de',
@@ -166,14 +203,15 @@ out body;`;
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Content-Length': Buffer.byteLength(`data=${encodeURIComponent(query)}`)
+        'Content-Length': Buffer.byteLength(`data=${encodeURIComponent(query)}`),
+        'Accept': 'application/json'
       }
     };
 
     const req = https.request(options, (res) => {
       let data = '';
       
-      console.log(`[Overpass] API response status: ${res.statusCode}`);
+      console.log(`[Overpass] HTTPS response status: ${res.statusCode}`);
 
       res.on('data', (chunk) => {
         data += chunk;
@@ -183,18 +221,29 @@ out body;`;
         try {
           const json = JSON.parse(data);
           const elements = json.elements || [];
-          console.log(`[Overpass] API returned ${elements.length} elements`);
+          console.log(`[Overpass] HTTPS returned ${elements.length} elements`);
+          if (elements.length === 0) {
+            console.warn('[Overpass] WARNING: Empty elements from Overpass HTTPS');
+            console.warn('[Overpass] Response keys:', Object.keys(json));
+          }
           resolve(json);
         } catch (error) {
-          console.error('[Overpass] Failed to parse response:', error.message);
+          console.error('[Overpass] Failed to parse HTTPS response:', error.message);
+          console.error('[Overpass] Raw response preview:', data.substring(0, 200));
           reject(new Error('Failed to parse Overpass API response'));
         }
       });
     });
 
     req.on('error', (error) => {
-      console.error('[Overpass] Request error:', error.message);
+      console.error('[Overpass] HTTPS request error:', error.message);
       reject(error);
+    });
+
+    req.setTimeout(65000, () => {
+      console.error('[Overpass] HTTPS request timeout');
+      req.destroy();
+      reject(new Error('Overpass API timeout'));
     });
 
     req.write(`data=${encodeURIComponent(query)}`);
@@ -212,7 +261,7 @@ function normalizeBusStops(osmData) {
     return [];
   }
 
-  return osmData.elements
+  const stops = osmData.elements
     .filter(element => element.type === 'node' && element.lat && element.lon)
     .map(element => ({
       id: element.id.toString(),
@@ -220,6 +269,9 @@ function normalizeBusStops(osmData) {
       lat: element.lat,
       lng: element.lon
     }));
+  
+  console.log(`[Overpass] normalizeBusStops: ${stops.length} stops from ${osmData.elements.length} elements`);
+  return stops;
 }
 
 /**
