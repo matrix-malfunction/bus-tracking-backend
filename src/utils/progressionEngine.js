@@ -848,34 +848,48 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
         lastUpdate: Date.now(),
         jitterFiltered: true
       };
-    if (!nextStopDistanceMeters && stopProgress.currentStopDistance !== null) {
-      // No next stop, use current stop distance
-      nextStopDistanceMeters = stopProgress.currentStopDistance;
     }
+  }
+  
+  const avgSpeedKmh = rollingSpeedKmh;
     
-    const { etaMinutes, remainingDistanceMeters, rollingSpeedKmh } = computeEta(
-      busId,
-      nextStopId,
-      nextStopDistanceMeters,
-      speedKmh
-    );
-    
-    // Check for APPROACHING event (within 2 minutes of stop)
-    checkApproachingEvent(busId, nextStopId, etaMinutes, nextStopName);
-    
-    const avgSpeedKmh = rollingSpeedKmh;
-    
-    // Get stop names for display
-    const currentStopId = stopProgress.currentStopIndex >= 0 ? normalizedRoute.stops[stopProgress.currentStopIndex] : null;
-    const nextStopId = stopProgress.nextStopIndex >= 0 ? normalizedRoute.stops[stopProgress.nextStopIndex] : null;
-    const currentStopName = currentStopId ? getStopNameById(currentStopId) : null;
-    const nextStopName = nextStopId ? getStopNameById(nextStopId) : null;
+  // Get stop names for display
+  const currentStopId = stopProgress.currentStopIndex >= 0 ? normalizedRoute.stops[stopProgress.currentStopIndex] : null;
+  const nextStopId = stopProgress.nextStopIndex >= 0 ? normalizedRoute.stops[stopProgress.nextStopIndex] : null;
+  const currentStopName = currentStopId ? getStopNameById(currentStopId) : null;
+  const nextStopName = nextStopId ? getStopNameById(nextStopId) : null;
 
-    // Calculate effective arrival threshold based on GPS accuracy
-    const effectiveThreshold = Math.max(
-      STOP_ARRIVAL_THRESHOLD_METERS,
-      accuracy || 0
-    );
+  // Calculate remaining distance along corridor
+  const remainingDistanceKm = (projection.totalRouteLength - projection.cumulativeDistance) / 1000;
+  
+  // Calculate progress percentage
+  const progressPercent = Math.round(
+    (projection.cumulativeDistance / projection.totalRouteLength) * 100
+  );
+  
+  // Calculate ETA using stable rolling speed smoothing
+  // Get distance to next stop from stopProgress (now includes nextStopDistance)
+  let nextStopDistanceMeters = stopProgress.nextStopDistance || 0;
+  if (!nextStopDistanceMeters && stopProgress.currentStopDistance !== null) {
+    // No next stop, use current stop distance
+    nextStopDistanceMeters = stopProgress.currentStopDistance;
+  }
+  
+  const { etaMinutes, remainingDistanceMeters, rollingSpeedKmh } = computeEta(
+    busId,
+    nextStopId,
+    nextStopDistanceMeters,
+    speedKmh
+  );
+  
+  // Check for APPROACHING event (within 2 minutes of stop)
+  checkApproachingEvent(busId, nextStopId, etaMinutes, nextStopName);
+
+  // Calculate effective arrival threshold based on GPS accuracy
+  const effectiveThreshold = Math.max(
+    STOP_ARRIVAL_THRESHOLD_METERS,
+    accuracy || 0
+  );
 
   // Build progression result
   const progression = {
