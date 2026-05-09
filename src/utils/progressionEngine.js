@@ -345,6 +345,9 @@ function hasProgressionChanged(newProgression, oldProgression) {
   if (newProgression.currentStopIndex !== oldProgression.currentStopIndex) return true;
   if (newProgression.nextStopIndex !== oldProgression.nextStopIndex) return true;
   
+  // Check passed stops changes
+  if (JSON.stringify(newProgression.passedStopIds) !== JSON.stringify(oldProgression.passedStopIds)) return true;
+  
   // Check ETA changes (> 1 minute difference)
   const etaDiff = Math.abs(newProgression.etaMinutes - oldProgression.etaMinutes);
   if (etaDiff >= 1) return true;
