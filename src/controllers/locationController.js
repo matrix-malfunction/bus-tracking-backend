@@ -127,6 +127,7 @@ async function updateLocation(req, res) {
     const { busId, source, speed: driverSpeed, heading: driverHeading } = req.body;
     const lat = req.body.lat ?? req.body.latitude;
     const lng = req.body.lng ?? req.body.longitude;
+    const accuracy = req.body.accuracy ?? req.body.coords?.accuracy ?? null;
     
     console.log("[BACKEND] Parsed values:", { busId, lat, lng, source });
     
@@ -254,7 +255,7 @@ async function updateLocation(req, res) {
     // === COMPUTE PROGRESSION ===
     let progression = null;
     if (numLat && numLng && speed !== undefined) {
-      progression = computeBusProgression(busId, numLat, numLng, speed);
+      progression = computeBusProgression(busId, numLat, numLng, speed, accuracy);
       if (progression) {
         console.log("[BACKEND] Progression computed:", {
           busId,
@@ -301,7 +302,9 @@ async function updateLocation(req, res) {
           routeProgressIndex: progression.currentStopIndex,
           remainingDistanceKm: progression.remainingDistanceKm,
           progressPercent: progression.progressPercent,
-          avgSpeedKmh: progression.avgSpeedKmh
+          avgSpeedKmh: progression.avgSpeedKmh,
+          gpsConfidence: progression.gpsConfidence,
+          gpsAccuracy: progression.gpsAccuracy
         })
       };
       console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", emitPayload);

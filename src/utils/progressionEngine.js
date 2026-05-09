@@ -17,6 +17,19 @@ const MIN_SPEED_KMH = 5; // Minimum operational speed for ETA calculation
 // STOP ARRIVAL DETECTION thresholds
 const STOP_ARRIVAL_THRESHOLD_METERS = 40; // Bus must be within 40m to be "at" stop
 const STOP_ADVANCE_HYSTERESIS_METERS = 60; // Must advance 60m past stop to move to next
+const MAX_USABLE_ACCURACY_METERS = 80; // Maximum GPS accuracy we can use for progression
+
+/**
+ * Calculate GPS confidence level based on accuracy
+ * @param {number} accuracy - GPS accuracy in meters
+ * @returns {string} - HIGH / MEDIUM / LOW / UNUSABLE
+ */
+function getGpsConfidence(accuracy) {
+  if (!accuracy || accuracy <= 20) return "HIGH";
+  if (accuracy <= 40) return "MEDIUM";
+  if (accuracy <= MAX_USABLE_ACCURACY_METERS) return "LOW";
+  return "UNUSABLE";
+}
 
 // Build stop coordinate lookup map
 const STOP_COORDS_MAP = new Map(
@@ -152,12 +165,28 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates) {
 
 /**
  * Determine current and next stop based on projected position
- * Uses forward-only progression with arrival thresholds
+ * Uses forward-only progression with GPS accuracy-aware arrival thresholds
+ * @param {object} projection - Projected bus position
+ * @param {string[]} routeStops - Array of stop IDs in route order
+ * @param {object} prevProgression - Previous progression state
+ * @param {number} accuracy - GPS accuracy in meters
+ * @returns {object} - { currentStopIndex, nextStopIndex, passedStopIds }
  */
-function determineStopProgression(projection, routeStops, prevProgression) {
+function determineStopProgression(projection, routeStops, prevProgression, accuracy) {
   const { projectedPoint } = projection;
   const prevCurrentIndex = prevProgression?.currentStopIndex ?? -1;
   const prevNextIndex = prevProgression?.nextStopIndex ?? -1;
+  
+  // GPS ACCURACY-AWARE THRESHOLDS
+  // Use dynamic threshold based on GPS quality
+  const effectiveArrivalThreshold = Math.max(
+    STOP_ARRIVAL_THRESHOLD_METERS,
+    accuracy || 0
+  );
+  const effectiveHysteresis = Math.max(
+    STOP_ADVANCE_HYSTERESIS_METERS,
+    (accuracy || 0) * 1.5 // 1.5x multiplier for hysteresis
+  );
   
   // Get stop coordinates array for this route
   const stopCoords = routeStops.map(id => getStopCoordsById(id)).filter(Boolean);
@@ -191,8 +220,8 @@ function determineStopProgression(projection, routeStops, prevProgression) {
   for (let i = startIndex; i < stopDistances.length; i++) {
     const stop = stopDistances[i];
     
-    // Check if bus is at this stop (within arrival threshold)
-    if (stop.distance <= STOP_ARRIVAL_THRESHOLD_METERS) {
+    // Check if bus is at this stop (within effective arrival threshold based on GPS accuracy)
+    if (stop.distance <= effectiveArrivalThreshold) {
       // Arrived at stop i
       if (currentStopIndex !== i) {
         // Moving to new stop - previous current becomes passed
@@ -205,8 +234,8 @@ function determineStopProgression(projection, routeStops, prevProgression) {
       break; // Found current stop, stop searching
     }
     
-    // Check if we've advanced past a stop (beyond hysteresis)
-    if (i === startIndex && prevCurrentIndex >= 0 && stop.distance > STOP_ADVANCE_HYSTERESIS_METERS) {
+    // Check if we've advanced past a stop (beyond effective hysteresis)
+    if (i === startIndex && prevCurrentIndex >= 0 && stop.distance > effectiveHysteresis) {
       // We've moved past the previous current stop
       if (!passedStopIds.includes(routeStops[i])) {
         passedStopIds = [...passedStopIds, routeStops[i]];
@@ -216,7 +245,7 @@ function determineStopProgression(projection, routeStops, prevProgression) {
     }
     
     // Check if this is the next upcoming stop
-    if (stop.distance > STOP_ARRIVAL_THRESHOLD_METERS && currentStopIndex < 0) {
+    if (stop.distance > effectiveArrivalThreshold && currentStopIndex < 0) {
       // Haven't arrived at any stop yet, this is the next one
       nextStopIndex = i;
       break;
@@ -257,43 +286,41 @@ function calculateETA(remainingDistanceKm, busId) {
  * Main progression computation function
  * Called during each BUS_LOCATION_UPDATE
  */
-function computeBusProgression(busId, busLat, busLng, speedKmh) {
-  try {
-    // Get current tracking state
-    const trackingState = require("./trackingState").trackingState;
-    const state = trackingState.get(busId);
-    
-    if (!state || !state.routeId) {
-      return null; // No route assigned
-    }
-    
-    // Load route data
-    const route = routes.find(r => r.id === state.routeId);
-    if (!route) {
-      console.log(`[Progression] Route not found: ${state.routeId}`);
-      return null;
-    }
-    
-    // Get previous progression for hysteresis
-    const prevProgression = getBusProgression(busId);
-    
-    // Add speed sample for rolling average
-    addSpeedSample(busId, speedKmh);
-    
-    // Project bus position onto route corridor
-    const projection = projectOntoRouteCorridor(
-      busLat,
-      busLng,
-      route.coordinates
-    );
-    
-    if (!projection) {
-      console.log(`[Progression] Failed to project bus ${busId} onto route`);
-      return null;
-    }
-    
-    // GPS Jitter Check: Ignore tiny movements
-    let jitterFiltered = false;
+function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy) {
+  // Validate inputs
+  if (!Number.isFinite(busLat) || !Number.isFinite(busLng) || !route) {
+    console.log(`[Progression] Invalid inputs for bus ${busId}`);
+    return null;
+  }
+  
+  // Get previous progression state
+  const prevProgression = getBusProgression(busId);
+  
+  // GPS ACCURACY CHECK: Reject unusable GPS
+  const gpsConfidence = getGpsConfidence(accuracy);
+  if (gpsConfidence === "UNUSABLE") {
+    console.log(`[Progression GPS] Bus ${busId} accuracy ${accuracy}m exceeds ${MAX_USABLE_ACCURACY_METERS}m, returning previous state`);
+    return {
+      ...prevProgression,
+      lastUpdate: Date.now(),
+      gpsConfidence,
+      gpsAccuracy: accuracy
+    };
+  }
+  
+  // Convert speed to km/h for display
+  const speedKmh = speedMps * 3.6;
+  
+  // Project bus position onto route corridor
+  const projection = projectOntoRouteCorridor(busLat, busLng, route.coordinates);
+  
+  if (!projection) {
+    console.log(`[Progression] Failed to project bus ${busId} onto route`);
+    return null;
+  }
+  
+  // GPS Jitter Check: Ignore tiny movements
+  let jitterFiltered = false;
     if (prevProgression?.lastProjectedPoint) {
       const moveDistance = haversineDistance(
         prevProgression.lastProjectedPoint[0],
@@ -319,11 +346,12 @@ function computeBusProgression(busId, busLat, busLng, speedKmh) {
       }
     }
     
-    // Determine stop progression
+    // Determine stop progression with GPS accuracy awareness
     const stopProgress = determineStopProgression(
       projection,
       route.stops,
-      prevProgression
+      prevProgression,
+      accuracy
     );
     
     // Calculate remaining distance along corridor
@@ -343,9 +371,18 @@ function computeBusProgression(busId, busLat, busLng, speedKmh) {
     const currentStopName = currentStopId ? getStopNameById(currentStopId) : null;
     const nextStopName = nextStopId ? getStopNameById(nextStopId) : null;
 
+    // Calculate effective arrival threshold based on GPS accuracy
+    const effectiveThreshold = Math.max(
+      STOP_ARRIVAL_THRESHOLD_METERS,
+      accuracy || 0
+    );
+
     // Build progression result
     const progression = {
       busId,
+      gpsConfidence,
+      gpsAccuracy: accuracy || null,
+      effectiveThreshold,
       tripId: state.tripId,
       routeId: state.routeId,
       currentStopIndex: stopProgress.currentStopIndex,
@@ -383,10 +420,6 @@ function computeBusProgression(busId, busLat, busLng, speedKmh) {
     });
     
     return progression;
-  } catch (err) {
-    console.error(`[Progression] Error computing for bus ${busId}:`, err.message);
-    return null;
-  }
 }
 
 /**
