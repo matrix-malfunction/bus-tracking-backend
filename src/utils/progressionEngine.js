@@ -606,6 +606,22 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates) {
  * @returns {object} - { currentStopIndex, nextStopIndex, passedStopIds }
  */
 function determineStopProgression(projection, routeStops, prevProgression, accuracy, busId) {
+  // ENTRY TELEMETRY
+  console.log("[PROGRESSION ENTRY]", {
+    busId,
+    hasProjection: !!projection,
+    hasProjectedPoint: !!projection?.projectedPoint,
+    hasRouteStops: !!routeStops,
+    stopCount: routeStops?.length || 0,
+    accuracy: accuracy || null
+  });
+  
+  // Validate projection
+  if (!projection || !projection.projectedPoint) {
+    console.log("[PROGRESSION EXIT]", "NO_PROJECTION");
+    return { currentStopIndex: -1, nextStopIndex: -1, passedStopIds: [], currentStopDistance: null };
+  }
+  
   const { projectedPoint } = projection;
   const prevCurrentIndex = prevProgression?.currentStopIndex ?? -1;
   const prevNextIndex = prevProgression?.nextStopIndex ?? -1;
@@ -622,26 +638,53 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
     (accuracy || 0) * 1.5 // 1.5x multiplier for hysteresis
   );
   
-  // DIAGNOSTIC TELEMETRY: Normalized stops
-  const normalizedStops = routeStops.map(id => {
-    const coords = getStopCoordsById(id);
-    return { id, ...coords };
-  }).filter(stop => 
-    stop && typeof stop.lat === 'number' && typeof stop.lng === 'number'
-  );
+  // RAW ROUTE STOPS TELEMETRY
+  console.log("[RAW ROUTE STOPS]", routeStops?.slice(0, 3));
+  
+  // Validate route stops
+  if (!routeStops || !Array.isArray(routeStops) || routeStops.length === 0) {
+    console.log("[PROGRESSION EXIT]", "NO_STOPS");
+    return { currentStopIndex: -1, nextStopIndex: -1, passedStopIds: [], currentStopDistance: null };
+  }
+  
+  // Universal stop normalization - handles both string IDs and object stops
+  const normalizedStops = (routeStops || [])
+    .map(stop => {
+      if (typeof stop === "string") {
+        const coords = getStopCoordsById(stop);
+        return coords ? { id: stop, ...coords } : null;
+      }
+      
+      // Object stop - extract ID and coordinates
+      return {
+        id: stop.id,
+        name: stop.name,
+        lat: stop.lat ?? stop.latitude,
+        lng: stop.lng ?? stop.longitude
+      };
+    })
+    .filter(Boolean)
+    .filter(stop =>
+      typeof stop.lat === "number" &&
+      typeof stop.lng === "number"
+    );
   
   console.log("[NORMALIZED STOPS]", {
     busId,
     stopCount: normalizedStops.length,
-    sample: normalizedStops.slice(0, 3).map(s => ({ 
-      id: s.id, 
-      lat: s.lat, 
-      lng: s.lng 
+    sample: normalizedStops.slice(0, 3).map(s => ({
+      id: s.id,
+      lat: s.lat,
+      lng: s.lng
     }))
   });
   
-  if (normalizedStops.length === 0) {
-    console.log("[STOP MATCH] No valid stop coordinates found");
+  // Normalization validation
+  if (!normalizedStops.length) {
+    console.log("[PROGRESSION EXIT]", "NO_NORMALIZED_STOPS");
+    console.log("[NORMALIZATION FAILURE]", {
+      rawStops: routeStops?.slice(0, 3)
+    });
     return { currentStopIndex: -1, nextStopIndex: -1, passedStopIds: [], currentStopDistance: null };
   }
   
