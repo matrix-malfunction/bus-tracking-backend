@@ -271,24 +271,6 @@ async function updateLocation(req, res) {
     // Compute speed from position changes (more reliable than Expo GPS speed)
     const timestamp = Date.now();
 
-// === STRICT VALIDATION ===
-const numLat = Number(lat);
-const numLng = Number(lng);
-  
-if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) {
-console.log("[BACKEND] Invalid lat/lng:", { lat, lng, numLat, numLng });
-return res.status(400).json({ error: "Invalid lat/lng values" });
-}
-            eta: progression.etaMinutes + "min"
-          });
-        }
-      }
-    } catch (error) {
-      // CRITICAL: Never let progression failures break tracking
-      console.error("[Progression] Failed for bus", busId, ":", error.message);
-      progression = null;
-    }
-
     // === ROUTE SNAPPING (Corridor Locking) ===
     // Calculate snapped coordinates for professional AVL-style rendering
     // CRITICAL: This is an optional enhancement - tracking must continue even if snapping fails
