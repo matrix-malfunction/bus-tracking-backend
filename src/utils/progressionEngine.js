@@ -885,31 +885,6 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   });
   
   return progression;
-      busId,
-      progression,
-      stopProgress.currentStopDistance,
-      effectiveArrivalThreshold,
-      effectiveHysteresis
-    );
-    
-    // Store updated progression
-    setBusProgression(busId, progression);
-    
-    // Debug instrumentation
-    console.log("[PROGRESSION]", {
-      busId,
-      currentStopIndex: progression.currentStopIndex,
-      nextStopIndex: progression.nextStopIndex,
-      remainingDistanceKm: progression.remainingDistanceKm,
-      progressPercent: progression.progressPercent + "%",
-      etaMinutes: progression.etaMinutes + "min",
-      avgSpeed: avgSpeedKmh + "km/h",
-      cumulativeDistance: Math.round(projection.cumulativeDistance) + "m",
-      totalRouteLength: Math.round(projection.totalRouteLength) + "m",
-      jitterFiltered
-    });
-    
-    return progression;
 }
 
 /**
