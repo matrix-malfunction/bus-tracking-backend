@@ -28,8 +28,71 @@ const ROUTE_SNAP_MAX_DISTANCE_METERS = 150; // Hard cutoff - beyond this, no sna
 const stopEventState = new Map();
 
 // ETA STATE
-// Per-bus ETA state for stable predictions
 const etaState = new Map();
+
+/**
+ * Normalize coordinate to [lat, lng] format
+ * Supports: [lat, lng], [lng, lat], {lat, lng}, {latitude, longitude}
+ * Returns null if invalid
+ */
+function normalizeCoordinate(coord) {
+  if (!coord) return null;
+  
+  // Array format: [lat, lng] or [lng, lat]
+  if (Array.isArray(coord)) {
+    if (coord.length < 2) return null;
+    const [a, b] = coord;
+    if (typeof a !== 'number' || typeof b !== 'number') return null;
+    // Assume [lat, lng] - valid range check
+    if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return [a, b];
+    // Might be [lng, lat] - try swapping
+    if (Math.abs(a) <= 180 && Math.abs(b) <= 90) return [b, a];
+    // Return as-is if both in reasonable range
+    return [a, b];
+  }
+  
+  // Object format: {lat, lng}, {latitude, longitude}, {x, y}
+  if (typeof coord === 'object') {
+    const lat = coord.lat ?? coord.latitude ?? coord.y ?? null;
+    const lng = coord.lng ?? coord.longitude ?? coord.x ?? coord.lon ?? null;
+    if (typeof lat === 'number' && typeof lng === 'number') {
+      return [lat, lng];
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Create safe fallback progression object
+ * Used when progression computation fails but tracking must continue
+ */
+function createFallbackProgression(busId, gpsConfidence, gpsAccuracy) {
+  return {
+    busId,
+    isSnapped: false,
+    currentStopIndex: -1,
+    currentStopId: null,
+    currentStopName: null,
+    nextStopIndex: -1,
+    nextStopId: null,
+    nextStopName: null,
+    passedStopIds: [],
+    remainingDistanceKm: 0,
+    remainingDistanceMeters: null,
+    progressPercent: 0,
+    etaMinutes: null,
+    avgSpeedKmh: 0,
+    cumulativeDistance: 0,
+    totalRouteLength: 0,
+    lastProjectedPoint: null,
+    lastUpdate: Date.now(),
+    jitterFiltered: false,
+    gpsConfidence: gpsConfidence || "UNKNOWN",
+    gpsAccuracy: gpsAccuracy || null,
+    fallback: true // Mark as fallback for debugging
+  };
+}
 
 // Event callback registry - external consumers register here
 const eventCallbacks = [];
@@ -881,54 +944,55 @@ function calculateETA(remainingDistanceKm, busId) {
  * Called during each BUS_LOCATION_UPDATE
  */
 function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy) {
-  // ENTRY TELEMETRY
-  console.log("[COMPUTE ENTRY]", {
-    busId,
-    lat: busLat,
-    lng: busLng,
-    hasRoute: !!route,
-    routeId: route?.routeId || route?.id || null,
-    hasRouteCoords: !!route?.routeCoords,
-    coordCount: route?.routeCoords?.length || 0,
-    hasCoordinates: !!route?.coordinates,
-    coordCount2: route?.coordinates?.length || 0,
-    hasStops: !!route?.stops,
-    stopCount: route?.stops?.length || 0
-  });
-  
-  // Validate inputs
-  if (!Number.isFinite(busLat) || !Number.isFinite(busLng) || !route) {
-    console.log("[COMPUTE EXIT]", "NO_ROUTE", { busId });
-    return null;
-  }
-  
-  // ROUTE HYDRATION: Normalize route coordinates ONCE
-  const normalizedRouteCoords =
-    route?.routeCoords ||
-    route?.coordinates ||
-    [];
-  
-  // Hard validation for route coordinates
-  if (
-    !Array.isArray(normalizedRouteCoords) ||
-    normalizedRouteCoords.length < 2
-  ) {
-    console.log("[COMPUTE EXIT]", "NO_ROUTE_COORDS", {
+  try {
+    // ENTRY TELEMETRY
+    console.log("[COMPUTE ENTRY]", {
       busId,
-      routeId: route?.id || route?.routeId || null,
+      lat: busLat,
+      lng: busLng,
+      hasRoute: !!route,
+      routeId: route?.routeId || route?.id || null,
       hasRouteCoords: !!route?.routeCoords,
+      coordCount: route?.routeCoords?.length || 0,
       hasCoordinates: !!route?.coordinates,
-      coordsLength: normalizedRouteCoords?.length || 0
+      coordCount2: route?.coordinates?.length || 0,
+      hasStops: !!route?.stops,
+      stopCount: route?.stops?.length || 0
     });
-    return null;
-  }
-  
-  // Create normalized route object with guaranteed coordinates
-  const normalizedRoute = {
-    ...route,
-    routeCoords: normalizedRouteCoords,
-    coordinates: normalizedRouteCoords // Ensure both properties exist
-  };
+    
+    // Validate inputs
+    if (!Number.isFinite(busLat) || !Number.isFinite(busLng) || !route) {
+      console.log("[COMPUTE EXIT]", "NO_ROUTE", { busId });
+      return createFallbackProgression(busId, null, null);
+    }
+    
+    // GPS ACCURACY CHECK: Early validation
+    const gpsConfidence = getGpsConfidence(accuracy);
+    
+    // ROUTE HYDRATION: Normalize route coordinates ONCE with format support
+    const rawRouteCoords = route?.routeCoords || route?.coordinates || [];
+    const normalizedRouteCoords = (Array.isArray(rawRouteCoords) ? rawRouteCoords : [])
+      .map(normalizeCoordinate)
+      .filter(Boolean);
+    
+    // Safe validation for route coordinates
+    if (normalizedRouteCoords.length < 2) {
+      console.log("[COMPUTE EXIT]", "NO_ROUTE_COORDS", {
+        busId,
+        routeId: route?.id || route?.routeId || null,
+        hasRouteCoords: !!route?.routeCoords,
+        hasCoordinates: !!route?.coordinates,
+        coordsLength: normalizedRouteCoords?.length || 0
+      });
+      return createFallbackProgression(busId, gpsConfidence, accuracy);
+    }
+    
+    // Create normalized route object with guaranteed coordinates
+    const normalizedRoute = {
+      ...route,
+      routeCoords: normalizedRouteCoords,
+      coordinates: normalizedRouteCoords // Ensure both properties exist
+    };
   
   console.log("[COMPUTE]", "ROUTE_NORMALIZED", {
     busId,
@@ -945,22 +1009,6 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   
   // Get previous progression state
   const prevProgression = getBusProgression(busId);
-  
-  // GPS ACCURACY CHECK: Reject unusable GPS
-  const gpsConfidence = getGpsConfidence(accuracy);
-  if (gpsConfidence === "UNUSABLE") {
-    console.log("[COMPUTE EXIT]", "GPS_UNUSABLE", {
-      busId,
-      accuracy,
-      threshold: MAX_USABLE_ACCURACY_METERS
-    });
-    return {
-      ...prevProgression,
-      lastUpdate: Date.now(),
-      gpsConfidence,
-      gpsAccuracy: accuracy
-    };
-  }
   
   // Convert speed to km/h for display
   const speedKmh = speedMps * 3.6;
@@ -1161,6 +1209,15 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   });
   
   return progression;
+  } catch (error) {
+    // CRITICAL: Never let progression failures break tracking
+    console.error("[PROGRESSION] CRASH", {
+      busId,
+      error: error.message,
+      stack: error.stack?.split('\n')[0]
+    });
+    return createFallbackProgression(busId, gpsConfidence, accuracy);
+  }
 }
 
 /**
