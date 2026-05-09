@@ -4,7 +4,7 @@ const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
 const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute } = require("../utils/trackingState");
-const routes = require("../data/routes"); // Route master data
+const routes = require("../../data/routes"); // Route master data
 // Speed comes directly from driver app - no backend recalculation needed
 
 const { chooseBestSource } = require("../services/hybridSourceSelector");

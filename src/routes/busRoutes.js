@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const routes = require("../data/routes");
+const routes = require("../../data/routes");
 
 /**
  * GET /api/routes
