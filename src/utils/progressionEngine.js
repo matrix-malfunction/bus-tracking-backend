@@ -605,7 +605,7 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates) {
  * @param {number} accuracy - GPS accuracy in meters
  * @returns {object} - { currentStopIndex, nextStopIndex, passedStopIds }
  */
-function determineStopProgression(projection, routeStops, prevProgression, accuracy) {
+function determineStopProgression(projection, routeStops, prevProgression, accuracy, busId) {
   const { projectedPoint } = projection;
   const prevCurrentIndex = prevProgression?.currentStopIndex ?? -1;
   const prevNextIndex = prevProgression?.nextStopIndex ?? -1;
@@ -622,25 +622,52 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
     (accuracy || 0) * 1.5 // 1.5x multiplier for hysteresis
   );
   
-  // Get stop coordinates array for this route
-  const stopCoords = routeStops.map(id => getStopCoordsById(id)).filter(Boolean);
-  if (stopCoords.length === 0) {
-    return { currentStopIndex: -1, nextStopIndex: -1, passedStopIds: [] };
+  // DIAGNOSTIC TELEMETRY: Normalized stops
+  const normalizedStops = routeStops.map(id => {
+    const coords = getStopCoordsById(id);
+    return { id, ...coords };
+  }).filter(stop => 
+    stop && typeof stop.lat === 'number' && typeof stop.lng === 'number'
+  );
+  
+  console.log("[NORMALIZED STOPS]", {
+    busId,
+    stopCount: normalizedStops.length,
+    sample: normalizedStops.slice(0, 3).map(s => ({ 
+      id: s.id, 
+      lat: s.lat, 
+      lng: s.lng 
+    }))
+  });
+  
+  if (normalizedStops.length === 0) {
+    console.log("[STOP MATCH] No valid stop coordinates found");
+    return { currentStopIndex: -1, nextStopIndex: -1, passedStopIds: [], currentStopDistance: null };
   }
   
-  // Calculate distance from bus to each stop
-  const stopDistances = stopCoords.map((coord, index) => {
+  // Calculate distance from bus to each stop using projected (snapped) position
+  const stopDistances = normalizedStops.map((stop, index) => {
     const distance = haversineDistance(
       projectedPoint[0], projectedPoint[1],
-      coord.lat, coord.lng
+      stop.lat, stop.lng
     );
-    return { index, stopId: routeStops[index], distance };
+    return { index, stopId: stop.id, distance };
   });
   
   // Find nearest stop
   const nearest = stopDistances.reduce((best, current) => 
     current.distance < best.distance ? current : best
   );
+  
+  // DIAGNOSTIC TELEMETRY: Nearest stop
+  console.log("[NEAREST STOP]", {
+    busId,
+    effectiveLat: projectedPoint[0],
+    effectiveLng: projectedPoint[1],
+    nearestStopId: nearest?.stopId || null,
+    nearestDistance: nearest?.distance ? Math.round(nearest.distance) : null,
+    threshold: effectiveArrivalThreshold
+  });
   
   // DIAGNOSTIC TELEMETRY: Stop matching
   console.log("[STOP MATCH]", {
@@ -659,8 +686,7 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
   // FORWARD-ONLY PROGRESSION LOGIC
   // Start from previous position and only move forward
   const startIndex = Math.max(0, prevCurrentIndex);
-  
-  // Check if we've arrived at or passed any stop
+    // Check if we've arrived at or passed any stop
   for (let i = startIndex; i < stopDistances.length; i++) {
     const stop = stopDistances[i];
     
@@ -669,8 +695,8 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
       // Arrived at stop i
       if (currentStopIndex !== i) {
         // Moving to new stop - previous current becomes passed
-        if (currentStopIndex >= 0 && !passedStopIds.includes(routeStops[currentStopIndex])) {
-          passedStopIds = [...passedStopIds, routeStops[currentStopIndex]];
+        if (currentStopIndex >= 0 && !passedStopIds.includes(stopDistances[currentStopIndex].stopId)) {
+          passedStopIds = [...passedStopIds, stopDistances[currentStopIndex].stopId];
         }
         currentStopIndex = i;
         nextStopIndex = (i + 1 < stopDistances.length) ? i + 1 : -1;
@@ -682,8 +708,8 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
     // Check if we've advanced past a stop (beyond effective hysteresis)
     if (i === startIndex && prevCurrentIndex >= 0 && stop.distance > effectiveHysteresis) {
       // We've moved past the previous current stop
-      if (!passedStopIds.includes(routeStops[i])) {
-        passedStopIds = [...passedStopIds, routeStops[i]];
+      if (!passedStopIds.includes(stop.stopId)) {
+        passedStopIds = [...passedStopIds, stop.stopId];
       }
       // Continue to find next stop
       continue;
@@ -703,7 +729,13 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
     nextStopIndex = 0;
   }
   
-  return { currentStopIndex, nextStopIndex, passedStopIds, currentStopDistance };
+  // Calculate next stop distance for ETA
+  let nextStopDistance = null;
+  if (nextStopIndex >= 0 && stopDistances[nextStopIndex]) {
+    nextStopDistance = stopDistances[nextStopIndex].distance;
+  }
+  
+  return { currentStopIndex, nextStopIndex, passedStopIds, currentStopDistance, nextStopDistance };
 }
 
 /**
@@ -794,62 +826,29 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   
   // GPS Jitter Check: Ignore tiny movements
   let jitterFiltered = false;
-    if (prevProgression?.lastProjectedPoint) {
-      const moveDistance = haversineDistance(
-        prevProgression.lastProjectedPoint[0],
-        prevProgression.lastProjectedPoint[1],
-        projection.projectedPoint[0],
-        projection.projectedPoint[1]
-      );
-      
-      if (moveDistance < GPS_JITTER_THRESHOLD_METERS) {
-        // Too small to process - return previous progression with updated time
-        jitterFiltered = true;
-        console.log("[PROGRESSION JITTER]", {
-          busId,
-          moveDistance: Math.round(moveDistance) + "m",
-          threshold: GPS_JITTER_THRESHOLD_METERS + "m",
-          action: "filtered"
-        });
-        return {
-          ...prevProgression,
-          lastUpdate: Date.now(),
-          jitterFiltered: true
-        };
-      }
-    }
-    
-    // DIAGNOSTIC TELEMETRY: Route stops ordering
-    if (normalizedRoute.stops && normalizedRoute.stops.length > 0) {
-      console.log("[ROUTE STOPS]", normalizedRoute.stops.map((s, i) => ({
-        index: i,
-        id: s,
-        name: getStopNameById(s)
-      })));
-    }
-    
-    // Determine stop progression with GPS accuracy awareness
-    const stopProgress = determineStopProgression(
-      projection,
-      normalizedRoute.stops,
-      prevProgression,
-      accuracy
+  if (prevProgression?.lastProjectedPoint) {
+    const moveDistance = haversineDistance(
+      prevProgression.lastProjectedPoint[0],
+      prevProgression.lastProjectedPoint[1],
+      projection.projectedPoint[0],
+      projection.projectedPoint[1]
     );
     
-    // Calculate remaining distance along corridor
-    const remainingDistanceKm = (projection.totalRouteLength - projection.cumulativeDistance) / 1000;
-    
-    // Calculate progress percentage
-    const progressPercent = Math.round(
-      (projection.cumulativeDistance / projection.totalRouteLength) * 100
-    );
-    
-    // Calculate ETA using stable rolling speed smoothing
-    // Get distance to next stop (if available), otherwise use remaining route distance
-    let nextStopDistanceMeters = 0;
-    if (stopProgress.nextStopIndex >= 0 && stopDistances[stopProgress.nextStopIndex]) {
-      nextStopDistanceMeters = stopDistances[stopProgress.nextStopIndex].distance;
-    } else if (stopProgress.currentStopDistance !== null) {
+    if (moveDistance < GPS_JITTER_THRESHOLD_METERS) {
+      // Too small to process - return previous progression with updated time
+      jitterFiltered = true;
+      console.log("[PROGRESSION JITTER]", {
+        busId,
+        moveDistance: Math.round(moveDistance) + "m",
+        threshold: GPS_JITTER_THRESHOLD_METERS + "m",
+        action: "filtered"
+      });
+      return {
+        ...prevProgression,
+        lastUpdate: Date.now(),
+        jitterFiltered: true
+      };
+    if (!nextStopDistanceMeters && stopProgress.currentStopDistance !== null) {
       // No next stop, use current stop distance
       nextStopDistanceMeters = stopProgress.currentStopDistance;
     }
