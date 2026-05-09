@@ -133,7 +133,68 @@ async function getNextStop(busLat, busLng, route) {
   return { stop: nextStop, distance: minDist };
 }
 
+/**
+ * Sanitize number for safe serialization
+ * Returns finite numbers only, else null
+ */
+function sanitizeNumber(value) {
+  if (typeof value !== 'number') return null;
+  if (!Number.isFinite(value)) return null;
+  return value;
+}
+
+/**
+ * Create safe fallback payload for degraded mode
+ */
+function createFallbackPayload(busId, lat, lng) {
+  return {
+    busId,
+    lat: sanitizeNumber(lat) ?? null,
+    lng: sanitizeNumber(lng) ?? null,
+    speed: 0,
+    heading: 0,
+    isSnapped: false,
+    snappedLat: null,
+    snappedLng: null,
+    distanceFromRoute: null,
+    routeId: null,
+    nextStopId: null,
+    nextStopName: null,
+    nextStopEtaMinutes: null,
+    remainingDistanceMeters: null,
+    status: "active",
+    timestamp: new Date().toISOString(),
+    degraded: true
+  };
+}
+
 async function updateLocation(req, res) {
+  // Final safety wrapper - NEVER crash the driver
+  try {
+    await _updateLocationUnsafe(req, res);
+  } catch (fatalError) {
+    console.error("[CONTROLLER FATAL]", {
+      error: fatalError.message,
+      stack: fatalError.stack?.split('\n')[0],
+      body: req.body
+    });
+    
+    // Return HTTP 200 with degraded response
+    const fallbackBusId = req.body?.busId || "unknown";
+    const fallbackLat = Number(req.body?.lat) || null;
+    const fallbackLng = Number(req.body?.lng) || null;
+    
+    res.status(200).json({
+      success: true,
+      degraded: true,
+      message: "Location recorded (degraded mode)",
+      busId: fallbackBusId,
+      fallbackPayload: createFallbackPayload(fallbackBusId, fallbackLat, fallbackLng)
+    });
+  }
+}
+
+async function _updateLocationUnsafe(req, res) {
   // Log immediately upon entry - confirms controller is reached
   console.log("[BACKEND] ========== LOCATION UPDATE ==========");
   console.log("[BACKEND] req.body:", JSON.stringify(req.body, null, 2));
@@ -228,31 +289,54 @@ async function updateLocation(req, res) {
     }
     
     // === UPDATE DATABASE ===
-    const updated = await Bus.findOneAndUpdate(
-      { busId: busId.trim() },
-      {
-        $set: {
-          busId: busId.trim(),
-          location: {
-            type: "Point",
-            coordinates: [numLng, numLat],
+    let updated;
+    try {
+      // Sanitize coordinates for DB storage
+      const safeLat = sanitizeNumber(numLat);
+      const safeLng = sanitizeNumber(numLng);
+      
+      if (!safeLat || !safeLng) {
+        throw new Error(`Invalid coordinates: lat=${numLat}, lng=${numLng}`);
+      }
+      
+      updated = await Bus.findOneAndUpdate(
+        { busId: busId.trim() },
+        {
+          $set: {
+            busId: busId.trim(),
+            location: {
+              type: "Point",
+              coordinates: [safeLng, safeLat],
+            },
+            lat: safeLat,
+            lng: safeLng,
+            speed: sanitizeNumber(req.body.speed) || 0,
+            heading: sanitizeNumber(req.body.heading) || 0,
+            status: "active",
+            lastUpdate: new Date(),
           },
-          lat: numLat,
-          lng: numLng,
-          speed: req.body.speed || 0,
-          heading: req.body.heading || 0,
-          status: "active",
-          lastUpdate: new Date(),
         },
-      },
-      { upsert: true, new: true }
-    );
-    
-    console.log("[BACKEND] ✅ Saved to DB:", {
-      busId: updated.busId,
-      lat: numLat,
-      lng: numLng
-    });
+        { upsert: true, new: true }
+      );
+      
+      console.log("[BACKEND] ✅ Saved to DB:", {
+        busId: updated.busId,
+        lat: safeLat,
+        lng: safeLng
+      });
+    } catch (dbError) {
+      console.error("[BACKEND] ❌ DB Update Failed:", dbError.message);
+      // Continue with degraded mode - don't let DB failure break tracking
+      updated = {
+        busId: busId.trim(),
+        lat: numLat,
+        lng: numLng,
+        speed: req.body.speed || 0,
+        heading: req.body.heading || 0,
+        status: "active",
+        lastUpdate: new Date()
+      };
+    }
     
     // === USE DRIVER-COMPUTED SPEED (Single Source of Truth) ===
     // Backend does NOT recalculate - uses speed from driver app
@@ -270,6 +354,52 @@ async function updateLocation(req, res) {
     // === COMPUTE DERIVED SPEED FOR RELIABLE MOVEMENT DETECTION ===
     // Compute speed from position changes (more reliable than Expo GPS speed)
     const timestamp = Date.now();
+    
+    // === COMPUTE BUS PROGRESSION (ETA, Stop Detection, Events) ===
+    // CRITICAL: Progression is optional enrichment - tracking must survive failures
+    let progression = null;
+    try {
+      const activeRouteInfo = getBusRoute(busId);
+      const routeForProgression = activeRouteInfo ? {
+        routeId: activeRouteInfo.routeId,
+        routeCoords: activeRouteInfo.routeCoords,
+        stops: activeRouteInfo.stops || []
+      } : (routeInfo ? {
+        routeId: routeInfo.routeId,
+        routeCoords: routeInfo.routeCoords,
+        stops: routeInfo.stops || []
+      } : null);
+      
+      if (routeForProgression && routeForProgression.routeCoords) {
+        progression = computeBusProgression(
+          busId,
+          numLat,
+          numLng,
+          speed,
+          routeForProgression,
+          accuracy
+        );
+      }
+      
+      if (progression) {
+        console.log("[LOCATION]", "COMPUTE_RESPONSE", {
+          busId,
+          hasProgression: true,
+          isSnapped: progression?.isSnapped || false,
+          snappedLat: progression?.lastProjectedPoint?.lat || null,
+          currentStopId: progression?.currentStopId || null,
+          nextStopId: progression?.nextStopId || null
+        });
+      }
+    } catch (progressionError) {
+      console.error("[PROGRESSION] FAILED", {
+        busId,
+        error: progressionError.message,
+        stack: progressionError.stack?.split('\n')[0]
+      });
+      // Progression failure is non-fatal - continue tracking
+      progression = null;
+    }
 
     // === ROUTE SNAPPING (Corridor Locking) ===
     // Calculate snapped coordinates for professional AVL-style rendering
@@ -331,101 +461,119 @@ async function updateLocation(req, res) {
     }
 
     // === SOCKET EMIT ===
-    if (io && busId && Number.isFinite(numLat) && Number.isFinite(numLng)) {
-      const emitPayload = {
-        busId: busId.trim(),
-        // Raw GPS coordinates (always included)
-        latitude: numLat,
-        longitude: numLng,
-        // Snapped coordinates (if within route corridor)
-        ...(snappedCoords && {
-          snappedLat: snappedCoords.snappedLat,
-          snappedLng: snappedCoords.snappedLng,
-          isSnapped: true,
-          distanceFromRoute: snappedCoords.distanceFromRoute,
-          isSoftSnap: snappedCoords.isSoftSnap || false
-        }),
-        speed: speed, // Driver-computed speed (for display)
-        derivedSpeed: derivedSpeed, // Backend-derived speed (for visual state detection)
-        heading: Math.round(heading),
-        trackingActive: true,
-        ...(routeInfo && {
-          routeId: routeInfo.routeId,
-          routeName: routeInfo.routeName,
-          routeColor: routeInfo.routeColor,
-          direction: routeInfo.direction,
-          tripId: routeInfo.tripId,
-          routeCoords: routeCoords // Active route corridor coordinates
-        }),
-        // Include progression fields for live stop display (from progression engine)
-        ...(progression && {
-          snappedLat: progression.lastProjectedPoint?.[0] ?? null,
-          snappedLng: progression.lastProjectedPoint?.[1] ?? null,
-          isSnapped: true,
-          distanceFromRoute: progression.effectiveThreshold || null,
-          currentStopId: progression.currentStopId ?? null,
-          currentStopName: progression.currentStopName ?? null,
-          nextStopId: progression.nextStopId ?? null,
-          nextStopName: progression.nextStopName ?? null,
-          passedStopIds: progression.passedStopIds ?? [],
-          nextStopEtaMinutes: progression.etaMinutes ?? null,
-          remainingDistanceMeters: progression.remainingDistanceMeters ?? null,
-          routeProgressIndex: progression.currentStopIndex ?? -1,
-          remainingDistanceKm: progression.remainingDistanceKm ?? null,
-          progressPercent: progression.progressPercent ?? 0,
-          avgSpeedKmh: progression.avgSpeedKmh ?? 0,
-          gpsConfidence: progression.gpsConfidence ?? "UNKNOWN",
-          gpsAccuracy: progression.gpsAccuracy ?? null
-        })
-      };
-      
-      // Emit telemetry
-      console.log("[LOCATION]", "EMIT_PAYLOAD", {
-        busId,
-        isSnapped: !!progression,
-        snappedLat: progression?.lastProjectedPoint?.[0] ?? null,
-        currentStopId: progression?.currentStopId ?? null,
-        nextStopId: progression?.nextStopId ?? null,
-        etaMinutes: progression?.etaMinutes ?? null
-      });
-      
-      console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", emitPayload);
-      console.log("[ROUTE EMIT]", {
-        busId: emitPayload.busId,
-        routeId: emitPayload.routeId,
-        routeName: emitPayload.routeName,
-        direction: emitPayload.direction,
-        tripId: emitPayload.tripId,
-      });
+    // CRITICAL: Socket emit failure must not break tracking
+    try {
+      if (io && busId && Number.isFinite(numLat) && Number.isFinite(numLng)) {
+        // Sanitize all numeric fields for safe serialization
+        const emitPayload = {
+          busId: busId.trim(),
+          // Raw GPS coordinates (always included)
+          latitude: sanitizeNumber(numLat),
+          longitude: sanitizeNumber(numLng),
+          // Snapped coordinates (if within route corridor)
+          ...(snappedCoords && {
+            snappedLat: sanitizeNumber(snappedCoords.snappedLat),
+            snappedLng: sanitizeNumber(snappedCoords.snappedLng),
+            isSnapped: true,
+            distanceFromRoute: sanitizeNumber(snappedCoords.distanceFromRoute),
+            isSoftSnap: snappedCoords.isSoftSnap || false
+          }),
+          speed: sanitizeNumber(speed) || 0,
+          derivedSpeed: sanitizeNumber(derivedSpeed) || 0,
+          heading: Math.round(sanitizeNumber(heading) || 0),
+          trackingActive: true,
+          ...(routeInfo && {
+            routeId: routeInfo.routeId,
+            routeName: routeInfo.routeName,
+            routeColor: routeInfo.routeColor,
+            direction: routeInfo.direction,
+            tripId: routeInfo.tripId,
+            routeCoords: routeCoords
+          }),
+          // Include progression fields for live stop display (from progression engine)
+          ...(progression && {
+            snappedLat: sanitizeNumber(progression.lastProjectedPoint?.lat) ?? null,
+            snappedLng: sanitizeNumber(progression.lastProjectedPoint?.lng) ?? null,
+            isSnapped: progression.isSnapped || false,
+            distanceFromRoute: sanitizeNumber(progression.distanceFromRoute) ?? null,
+            currentStopId: progression.currentStopId ?? null,
+            currentStopName: progression.currentStopName ?? null,
+            nextStopId: progression.nextStopId ?? null,
+            nextStopName: progression.nextStopName ?? null,
+            passedStopIds: progression.passedStopIds || [],
+            nextStopEtaMinutes: sanitizeNumber(progression.etaMinutes) ?? null,
+            remainingDistanceMeters: sanitizeNumber(progression.remainingDistanceMeters) ?? null,
+            routeProgressIndex: progression.currentStopIndex ?? -1,
+            remainingDistanceKm: sanitizeNumber(progression.remainingDistanceKm) ?? null,
+            progressPercent: sanitizeNumber(progression.progressPercent) ?? 0,
+            avgSpeedKmh: sanitizeNumber(progression.avgSpeedKmh) ?? 0,
+            gpsConfidence: progression.gpsConfidence || "UNKNOWN",
+            gpsAccuracy: sanitizeNumber(progression.gpsAccuracy) ?? null
+          })
+        };
+        
+        // Safe payload serialization - prevents circular references and NaN
+        const safePayload = JSON.parse(JSON.stringify(emitPayload));
+        
+        // Emit telemetry
+        console.log("[LOCATION]", "EMIT_PAYLOAD", {
+          busId,
+          isSnapped: !!progression,
+          snappedLat: safePayload.snappedLat,
+          currentStopId: safePayload.currentStopId,
+          nextStopId: safePayload.nextStopId,
+          etaMinutes: safePayload.nextStopEtaMinutes
+        });
+        
+        console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", safePayload);
+        console.log("[ROUTE EMIT]", {
+          busId: safePayload.busId,
+          routeId: safePayload.routeId,
+          routeName: safePayload.routeName,
+          direction: safePayload.direction,
+          tripId: safePayload.tripId,
+        });
 
-      io.emit("BUS_LOCATION_UPDATE", emitPayload);
-      console.log("[BACKEND] ✅ Socket event emitted");
-      
-      // === EMIT PROGRESSION UPDATE (if changed) ===
-      if (progression) {
-        const prevProgression = trackingState.get(busId)?.progression;
-        if (hasProgressionChanged(progression, prevProgression)) {
-          const progressEmitPayload = {
-            busId: busId.trim(),
-            tripId: progression.tripId,
-            routeId: progression.routeId,
-            currentStopIndex: progression.currentStopIndex,
-            nextStopIndex: progression.nextStopIndex,
-            passedStopIds: progression.passedStopIds,
-            remainingDistanceKm: progression.remainingDistanceKm,
-            progressPercent: progression.progressPercent,
-            etaMinutes: progression.etaMinutes,
-            avgSpeedKmh: progression.avgSpeedKmh
-          };
-          
-          console.log("[BACKEND] 📡 Emitting BUS_PROGRESS_UPDATE:", progressEmitPayload);
-          io.emit("BUS_PROGRESS_UPDATE", progressEmitPayload);
-        } else {
-          console.log("[BACKEND] ⏭️ Progression unchanged, skipping emit");
+        io.emit("BUS_LOCATION_UPDATE", safePayload);
+        console.log("[BACKEND] ✅ Socket event emitted");
+        
+        // === EMIT PROGRESSION UPDATE (if changed) ===
+        if (progression) {
+          try {
+            const prevProgression = trackingState.get(busId)?.progression;
+            if (hasProgressionChanged(progression, prevProgression)) {
+              const progressEmitPayload = {
+                busId: busId.trim(),
+                tripId: progression.tripId,
+                routeId: progression.routeId,
+                currentStopIndex: progression.currentStopIndex,
+                nextStopIndex: progression.nextStopIndex,
+                passedStopIds: progression.passedStopIds || [],
+                remainingDistanceKm: sanitizeNumber(progression.remainingDistanceKm) ?? null,
+                progressPercent: sanitizeNumber(progression.progressPercent) ?? null,
+                etaMinutes: sanitizeNumber(progression.etaMinutes) ?? null,
+                avgSpeedKmh: sanitizeNumber(progression.avgSpeedKmh) ?? null
+              };
+              
+              // Safe serialization
+              const safeProgressPayload = JSON.parse(JSON.stringify(progressEmitPayload));
+              
+              console.log("[BACKEND] 📡 Emitting BUS_PROGRESS_UPDATE:", safeProgressPayload);
+              io.emit("BUS_PROGRESS_UPDATE", safeProgressPayload);
+            } else {
+              console.log("[BACKEND] ⏭️ Progression unchanged, skipping emit");
+            }
+          } catch (progressEmitError) {
+            console.error("[BACKEND] ⚠️ Progress emit failed:", progressEmitError.message);
+            // Non-fatal: continue tracking
+          }
         }
+      } else {
+        console.log("[BACKEND] ⚠️ Socket emit skipped - invalid data");
       }
-    } else {
-      console.log("[BACKEND] ⚠️ Socket emit skipped - invalid data");
+    } catch (emitError) {
+      console.error("[BACKEND] ⚠️ Socket emit failed:", emitError.message);
+      // Non-fatal: continue tracking even if emit fails
     }
 
     // === UPDATE TRACKING STATE ===
