@@ -270,19 +270,15 @@ async function updateLocation(req, res) {
     // === COMPUTE DERIVED SPEED FOR RELIABLE MOVEMENT DETECTION ===
     // Compute speed from position changes (more reliable than Expo GPS speed)
     const timestamp = Date.now();
-    const { derivedSpeed } = computeDerivedSpeed(busId.trim(), numLat, numLng, timestamp);
 
-    // === COMPUTE PROGRESSION ===
-    let progression = null;
-    try {
-      if (numLat && numLng && speed !== undefined) {
-        progression = computeBusProgression(busId, numLat, numLng, speed, accuracy);
-        if (progression) {
-          console.log("[BACKEND] Progression computed:", {
-            busId,
-            currentStop: progression.currentStopIndex,
-            nextStop: progression.nextStopIndex,
-            progress: progression.progressPercent + "%",
+// === STRICT VALIDATION ===
+const numLat = Number(lat);
+const numLng = Number(lng);
+  
+if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) {
+console.log("[BACKEND] Invalid lat/lng:", { lat, lng, numLat, numLng });
+return res.status(400).json({ error: "Invalid lat/lng values" });
+}
             eta: progression.etaMinutes + "min"
           });
         }
@@ -379,23 +375,38 @@ async function updateLocation(req, res) {
           tripId: routeInfo.tripId,
           routeCoords: routeCoords // Active route corridor coordinates
         }),
-        // Include progression fields for live stop display
+        // Include progression fields for live stop display (from progression engine)
         ...(progression && {
-          currentStopId: progression.currentStopId,
-          currentStopName: progression.currentStopName,
-          nextStopId: progression.nextStopId,
-          nextStopName: progression.nextStopName,
-          passedStopIds: progression.passedStopIds,
-          nextStopEtaMinutes: progression.etaMinutes,
-          remainingDistanceMeters: progression.remainingDistanceMeters,
-          routeProgressIndex: progression.currentStopIndex,
-          remainingDistanceKm: progression.remainingDistanceKm,
-          progressPercent: progression.progressPercent,
-          avgSpeedKmh: progression.avgSpeedKmh,
-          gpsConfidence: progression.gpsConfidence,
-          gpsAccuracy: progression.gpsAccuracy
+          snappedLat: progression.lastProjectedPoint?.[0] ?? null,
+          snappedLng: progression.lastProjectedPoint?.[1] ?? null,
+          isSnapped: true,
+          distanceFromRoute: progression.effectiveThreshold || null,
+          currentStopId: progression.currentStopId ?? null,
+          currentStopName: progression.currentStopName ?? null,
+          nextStopId: progression.nextStopId ?? null,
+          nextStopName: progression.nextStopName ?? null,
+          passedStopIds: progression.passedStopIds ?? [],
+          nextStopEtaMinutes: progression.etaMinutes ?? null,
+          remainingDistanceMeters: progression.remainingDistanceMeters ?? null,
+          routeProgressIndex: progression.currentStopIndex ?? -1,
+          remainingDistanceKm: progression.remainingDistanceKm ?? null,
+          progressPercent: progression.progressPercent ?? 0,
+          avgSpeedKmh: progression.avgSpeedKmh ?? 0,
+          gpsConfidence: progression.gpsConfidence ?? "UNKNOWN",
+          gpsAccuracy: progression.gpsAccuracy ?? null
         })
       };
+      
+      // Emit telemetry
+      console.log("[LOCATION]", "EMIT_PAYLOAD", {
+        busId,
+        isSnapped: !!progression,
+        snappedLat: progression?.lastProjectedPoint?.[0] ?? null,
+        currentStopId: progression?.currentStopId ?? null,
+        nextStopId: progression?.nextStopId ?? null,
+        etaMinutes: progression?.etaMinutes ?? null
+      });
+      
       console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", emitPayload);
       console.log("[ROUTE EMIT]", {
         busId: emitPayload.busId,
