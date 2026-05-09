@@ -61,15 +61,24 @@ function getStopCoordsById(stopId) {
 function snapToRouteCorridor(lat, lng, routeCoords) {
   // Defensive validation - never throw, always return null on invalid input
   if (!routeCoords || !Array.isArray(routeCoords) || routeCoords.length < 2) {
+    console.log("[SNAP DEBUG] Invalid routeCoords:", routeCoords);
     return null;
   }
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    console.log("[SNAP DEBUG] Invalid GPS coords:", lat, lng);
     return null;
   }
+  
+  // ROUTE FORMAT DIAGNOSTIC
+  console.log("[SNAP DEBUG] Bus GPS:", { lat, lng, routePoints: routeCoords.length });
+  console.log("[ROUTE FORMAT] First coordinate:", routeCoords[0]);
+  console.log("[ROUTE FORMAT] Last coordinate:", routeCoords[routeCoords.length - 1]);
   
   let minDistance = Infinity;
   let snappedPoint = null;
   let snappedSegmentIndex = -1;
+  let bestSegmentStart = null;
+  let bestSegmentEnd = null;
   
   // Find nearest segment with defensive validation
   for (let i = 0; i < routeCoords.length - 1; i++) {
@@ -109,48 +118,75 @@ function snapToRouteCorridor(lat, lng, routeCoords) {
       minDistance = projection.distance;
       snappedPoint = projection.point;
       snappedSegmentIndex = i;
+      bestSegmentStart = segmentStart;
+      bestSegmentEnd = segmentEnd;
     }
   }
   
+  // Log best segment found (or null if none)
+  console.log("[SNAP SEGMENT] Best segment:", {
+    index: snappedSegmentIndex,
+    start: bestSegmentStart,
+    end: bestSegmentEnd,
+    distance: minDistance === Infinity ? null : Math.round(minDistance),
+    snappedPoint: snappedPoint
+  });
+  
   // Validate final snapped coordinates before returning
   if (!snappedPoint || !Array.isArray(snappedPoint) || snappedPoint.length < 2) {
+    console.log("[SNAP RESULT] No valid snapped point found");
     return null;
   }
   const snappedLat = snappedPoint[0];
   const snappedLng = snappedPoint[1];
   if (!Number.isFinite(snappedLat) || !Number.isFinite(snappedLng)) {
+    console.log("[SNAP RESULT] Snapped coordinates non-finite:", snappedLat, snappedLng);
     return null;
   }
   
   // Hard cutoff: beyond 150m, no snapping at all
   if (minDistance > ROUTE_SNAP_MAX_DISTANCE_METERS) {
+    console.log("[SNAP RESULT] Distance exceeds max threshold:", Math.round(minDistance), ">", ROUTE_SNAP_MAX_DISTANCE_METERS);
     return null;
   }
   
   // Soft threshold: within 100m, return snapped coordinates
   // Between 100-150m, still snap but with warning flag (for debugging)
   if (minDistance <= ROUTE_SNAP_THRESHOLD_METERS) {
-    return {
+    const result = {
       snappedLat: snappedPoint[0],
       snappedLng: snappedPoint[1],
       distanceFromRoute: minDistance,
       isSnapped: true,
       segmentIndex: snappedSegmentIndex
     };
+    console.log("[SNAP RESULT] HARD SNAP:", {
+      snappedLat: result.snappedLat,
+      snappedLng: result.snappedLng,
+      distanceFromRoute: Math.round(result.distanceFromRoute)
+    });
+    return result;
   }
   
-  // Between 100-150m: soft snap with warning
+  // Soft snap: between 100-150m
   if (minDistance <= ROUTE_SNAP_MAX_DISTANCE_METERS) {
-    return {
+    const result = {
       snappedLat: snappedPoint[0],
       snappedLng: snappedPoint[1],
       distanceFromRoute: minDistance,
       isSnapped: true,
-      isSoftSnap: true, // Flag for potential off-route warning
+      isSoftSnap: true,
       segmentIndex: snappedSegmentIndex
     };
+    console.log("[SNAP RESULT] SOFT SNAP:", {
+      snappedLat: result.snappedLat,
+      snappedLng: result.snappedLng,
+      distanceFromRoute: Math.round(result.distanceFromRoute)
+    });
+    return result;
   }
   
+  console.log("[SNAP RESULT] No snap - distance too far:", Math.round(minDistance));
   return null;
 }
 
