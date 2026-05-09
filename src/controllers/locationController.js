@@ -277,15 +277,42 @@ async function updateLocation(req, res) {
     // Calculate snapped coordinates for professional AVL-style rendering
     // CRITICAL: This is an optional enhancement - tracking must continue even if snapping fails
     let snappedCoords = null;
+    
+    // EXECUTION TRACE: Track route lookup
     const routeInfo = getBusRoute(busId);
-    const routeData = routeInfo ? routes.find(r => r.id === routeInfo.routeId) : null;
-    const routeCoords = routeData?.coordinates || null;
+    console.log("[SNAP TRACE] busId:", busId, "routeInfo:", routeInfo);
+    
+    let routeData = null;
+    if (routeInfo && routeInfo.routeId) {
+      routeData = routes.find(r => r.id === routeInfo.routeId);
+      console.log("[SNAP TRACE] Looking for routeId:", routeInfo.routeId, "found:", !!routeData);
+    }
+    
+    // Normalize route coordinate access (handle both formats)
+    const routeCoords =
+      routeData?.routeCoords ||
+      routeData?.coordinates ||
+      null;
+    
+    console.log("[SNAP TRACE] coords source:", {
+      hasRouteCoords: !!routeData?.routeCoords,
+      hasCoordinates: !!routeData?.coordinates,
+      coordsCount: Array.isArray(routeCoords) ? routeCoords.length : 0
+    });
     
     if (routeCoords && routeCoords.length >= 2) {
       try {
+        console.log("[SNAP TRACE] Invoking snapToRouteCorridor...");
         // Import snapToRouteCorridor from progressionEngine
         const { snapToRouteCorridor } = require("../utils/progressionEngine");
         snappedCoords = snapToRouteCorridor(numLat, numLng, routeCoords);
+        
+        console.log("[SNAP TRACE] snap result:", snappedCoords ? {
+          hasSnappedLat: !!snappedCoords.snappedLat,
+          hasSnappedLng: !!snappedCoords.snappedLng,
+          distance: Math.round(snappedCoords.distanceFromRoute),
+          isSnapped: snappedCoords.isSnapped
+        } : null);
         
         if (snappedCoords) {
           console.log("[BACKEND] Route snapping:", {
@@ -301,6 +328,8 @@ async function updateLocation(req, res) {
         console.error("[Route Snap] Failed for bus", busId, ":", error.message);
         snappedCoords = null;
       }
+    } else {
+      console.log("[SNAP TRACE] No valid routeCoords - skipping snapping");
     }
 
     // === SOCKET EMIT ===
