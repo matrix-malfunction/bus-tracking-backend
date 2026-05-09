@@ -6,6 +6,10 @@ const trackingState = new Map();
 // TTL timeout: 5 minutes of inactivity marks state as stale
 const TRACKING_STATE_TTL_MS = 5 * 60 * 1000;
 
+// Derived speed tracking for reliable movement state
+const DERIVED_SPEED_SMOOTHING = 0.3; // Weight for new speed (0.3 new, 0.7 previous)
+const MAX_REASONABLE_SPEED_KMH = 120; // Clamp GPS spikes to max reasonable speed
+
 /**
  * Set tracking active state for a bus
  * @param {string} busId - Bus identifier
@@ -17,8 +21,9 @@ const setTrackingActive = (busId, active, io = null) => {
   const wasActive = prevState?.trackingActive === true;
   const nextActive = active === true;
 
-  // When going inactive, clear speed to prevent stale data
+  // When going inactive, clear speed and derived speed to prevent stale data
   const nextSpeed = nextActive ? (prevState?.speed || 0) : 0;
+  const nextDerivedSpeed = nextActive ? (prevState?.derivedSpeed || 0) : 0;
 
   // Immutable state update with consistent keys
   const nextState = {
@@ -26,7 +31,11 @@ const setTrackingActive = (busId, active, io = null) => {
     sos: prevState?.sos || false, // Preserve SOS flag
     lastUpdate: Date.now(),
     location: prevState?.location || null,
-    speed: nextSpeed
+    speed: nextSpeed,
+    derivedSpeed: nextDerivedSpeed,
+    prevLat: null,
+    prevLng: null,
+    prevTimestamp: null
   };
   trackingState.set(busId, nextState);
 
@@ -426,10 +435,84 @@ const getRollingAverageSpeed = (busId) => {
   if (!progression?.speedSamples || progression.speedSamples.length === 0) {
     return 15; // Default fallback speed (15 km/h)
   }
-  
+
   const samples = progression.speedSamples;
   const sum = samples.reduce((a, b) => a + b, 0);
   return sum / samples.length;
+};
+
+/**
+ * Compute derived speed from position changes (reliable movement detection)
+ * @param {string} busId - Bus identifier
+ * @param {number} lat - Current latitude
+ * @param {number} lng - Current longitude
+ * @param {number} timestamp - Current timestamp
+ * @returns {object} - { derivedSpeed, updatedState }
+ */
+const computeDerivedSpeed = (busId, lat, lng, timestamp) => {
+  const prevState = trackingState.get(busId) || {};
+
+  const prevLat = prevState.prevLat;
+  const prevLng = prevState.prevLng;
+  const prevTimestamp = prevState.prevTimestamp;
+  const prevDerivedSpeed = prevState.derivedSpeed || 0;
+
+  let currentDerivedSpeed = prevDerivedSpeed;
+
+  // Compute speed from position change if we have previous data
+  if (prevLat !== null && prevLng !== null && prevTimestamp !== null) {
+    const timeDiffSec = (timestamp - prevTimestamp) / 1000;
+
+    // Only compute if reasonable time elapsed (avoid division by zero and noise)
+    if (timeDiffSec > 0.5 && timeDiffSec < 60) {
+      const distanceMeters = haversineDistance(prevLat, prevLng, lat, lng);
+      const speedMps = distanceMeters / timeDiffSec;
+      const speedKmh = speedMps * 3.6;
+
+      // Weighted smoothing: 70% previous, 30% new
+      currentDerivedSpeed = (prevDerivedSpeed * 0.7) + (speedKmh * DERIVED_SPEED_SMOOTHING);
+
+      // Fix #2: Clamp to prevent GPS spikes
+      currentDerivedSpeed = Math.min(currentDerivedSpeed, MAX_REASONABLE_SPEED_KMH);
+
+      console.log(`[DERIVED SPEED] Bus ${busId}: ${speedKmh.toFixed(2)} km/h (raw), ${currentDerivedSpeed.toFixed(2)} km/h (clamped)`);
+    }
+  }
+
+  // Update state with new position data
+  const nextState = {
+    ...prevState,
+    derivedSpeed: currentDerivedSpeed,
+    prevLat: lat,
+    prevLng: lng,
+    prevTimestamp: timestamp
+  };
+
+  trackingState.set(busId, nextState);
+
+  return {
+    derivedSpeed: currentDerivedSpeed,
+    updatedState: nextState
+  };
+};
+
+/**
+ * Haversine distance calculation (meters)
+ * @param {number} lat1 - Latitude 1
+ * @param {number} lng1 - Longitude 1
+ * @param {number} lat2 - Latitude 2
+ * @param {number} lng2 - Longitude 2
+ * @returns {number} - Distance in meters
+ */
+const haversineDistance = (lat1, lng1, lat2, lng2) => {
+  const R = 6371000; // Earth radius in meters
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
 };
 
 module.exports = {
@@ -439,6 +522,8 @@ module.exports = {
   isSosActive,
   getTrackingState,
   hasTrackingState,
+  computeDerivedSpeed,
+  haversineDistance,
   isStateStale,
   cleanupStaleState,
   clearTrackingState,

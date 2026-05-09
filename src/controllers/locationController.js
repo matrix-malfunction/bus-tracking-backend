@@ -3,7 +3,7 @@ const Route = require("../models/Route");
 const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
-const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute } = require("../utils/trackingState");
+const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute, computeDerivedSpeed } = require("../utils/trackingState");
 const routes = require("../../data/routes"); // Route master data
 const { computeBusProgression, hasProgressionChanged, GPS_JITTER_THRESHOLD_METERS } = require("../utils/progressionEngine");
 // Speed comes directly from driver app - no backend recalculation needed
@@ -237,14 +237,19 @@ async function updateLocation(req, res) {
     // Backend does NOT recalculate - uses speed from driver app
     const rawDriverSpeed = Number(driverSpeed) || 0;
     const heading = Number(driverHeading) || 0;
-    
+
     // DEAD-ZONE FILTER: If speed < 5 km/h, consider stationary (prevents UI noise)
     const speed = rawDriverSpeed < MIN_SPEED_MPS ? 0 : rawDriverSpeed;
-    
+
     console.log("[BACKEND] Using driver speed:", rawDriverSpeed, "m/s (", Math.round(rawDriverSpeed * 3.6), "km/h)");
     if (speed === 0 && rawDriverSpeed > 0) {
       console.log("[BACKEND] Speed filtered to 0 (below 5 km/h threshold)");
     }
+
+    // === COMPUTE DERIVED SPEED FOR RELIABLE MOVEMENT DETECTION ===
+    // Compute speed from position changes (more reliable than Expo GPS speed)
+    const timestamp = Date.now();
+    const { derivedSpeed } = computeDerivedSpeed(busId.trim(), numLat, numLng, timestamp);
 
     // === COMPUTE PROGRESSION ===
     let progression = null;
@@ -270,7 +275,8 @@ async function updateLocation(req, res) {
         busId: busId.trim(),
         latitude: numLat,
         longitude: numLng,
-        speed: speed, // Driver-computed speed, no backend recalculation
+        speed: speed, // Driver-computed speed (for display)
+        derivedSpeed: derivedSpeed, // Backend-derived speed (for visual state detection)
         heading: Math.round(heading),
         trackingActive: true,
         ...(routeInfo && {
