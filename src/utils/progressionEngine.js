@@ -23,6 +23,202 @@ const MAX_USABLE_ACCURACY_METERS = 80; // Maximum GPS accuracy we can use for pr
 const ROUTE_SNAP_THRESHOLD_METERS = 100; // Maximum distance from route to snap (otherwise use raw GPS)
 const ROUTE_SNAP_MAX_DISTANCE_METERS = 150; // Hard cutoff - beyond this, no snapping at all
 
+// STOP EVENT ENGINE
+// Per-bus stop event state for lifecycle tracking (APPROACHING -> ARRIVED -> DWELLING -> DEPARTED)
+const stopEventState = new Map();
+
+// Event callback registry - external consumers register here
+const eventCallbacks = [];
+
+/**
+ * Register a callback for stop events
+ * @param {Function} callback - function(eventType, payload)
+ */
+function onStopEvent(callback) {
+  eventCallbacks.push(callback);
+}
+
+/**
+ * Emit a stop event to all registered callbacks
+ * @param {string} eventType - ARRIVED, DEPARTED, DWELLING, APPROACHING
+ * @param {object} payload - event data
+ */
+function emitStopEvent(eventType, payload) {
+  console.log(`[STOP EVENT] ${eventType}:`, payload);
+  eventCallbacks.forEach(cb => {
+    try {
+      cb(eventType, payload);
+    } catch (err) {
+      console.error("[STOP EVENT] Callback error:", err.message);
+    }
+  });
+}
+
+/**
+ * Get or initialize stop event state for a bus
+ * @param {string} busId - Bus identifier
+ * @returns {object} - stop event state
+ */
+function getStopEventState(busId) {
+  if (!stopEventState.has(busId)) {
+    stopEventState.set(busId, {
+      currentStopId: null,
+      status: null, // APPROACHING, ARRIVED, DWELLING, DEPARTED
+      arrivedAt: null,
+      departedAt: null,
+      dwellSeconds: 0,
+      lastEventStopId: null,
+      lastEventType: null
+    });
+  }
+  return stopEventState.get(busId);
+}
+
+/**
+ * Update stop event state based on current progression
+ * Detects ARRIVAL, DWELLING, and DEPARTURE lifecycle events
+ * @param {string} busId - Bus identifier
+ * @param {object} progression - Current progression state
+ * @param {number} distanceToStop - Distance to current stop in meters
+ * @param {number} effectiveArrivalThreshold - Dynamic threshold based on GPS accuracy
+ * @param {number} effectiveHysteresis - Hysteresis threshold
+ */
+function updateStopEventState(busId, progression, distanceToStop, effectiveArrivalThreshold, effectiveHysteresis) {
+  const state = getStopEventState(busId);
+  const currentStopId = progression?.currentStopId;
+  const now = Date.now();
+  
+  // No current stop - bus is between stops
+  if (!currentStopId) {
+    // If we were at a stop and now we're not, emit DEPARTED
+    if (state.status === 'ARRIVED' || state.status === 'DWELLING') {
+      const dwellSeconds = state.arrivedAt ? Math.round((now - state.arrivedAt) / 1000) : 0;
+      
+      emitStopEvent('DEPARTED', {
+        busId,
+        stopId: state.currentStopId,
+        stopName: getStopNameById(state.currentStopId),
+        dwellSeconds,
+        departedAt: now
+      });
+      
+      // Update state
+      state.status = 'DEPARTED';
+      state.departedAt = now;
+      state.dwellSeconds = dwellSeconds;
+      state.lastEventStopId = state.currentStopId;
+      state.lastEventType = 'DEPARTED';
+      state.currentStopId = null;
+    }
+    return;
+  }
+  
+  // New stop detected - different from previous
+  const isNewStop = state.currentStopId !== currentStopId;
+  
+  // Check for departure from previous stop (different stop or distance exceeds hysteresis)
+  if (state.currentStopId && state.currentStopId !== currentStopId && 
+      (state.status === 'ARRIVED' || state.status === 'DWELLING')) {
+    // Emit DEPARTED for previous stop
+    const dwellSeconds = state.arrivedAt ? Math.round((now - state.arrivedAt) / 1000) : 0;
+    
+    emitStopEvent('DEPARTED', {
+      busId,
+      stopId: state.currentStopId,
+      stopName: getStopNameById(state.currentStopId),
+      dwellSeconds,
+      departedAt: now,
+      nextStopId: currentStopId
+    });
+    
+    state.status = 'DEPARTED';
+    state.departedAt = now;
+    state.dwellSeconds = dwellSeconds;
+    state.lastEventStopId = state.currentStopId;
+    state.lastEventType = 'DEPARTED';
+  }
+  
+  // ARRIVAL detection: within threshold AND either new stop or was approaching
+  if (distanceToStop <= effectiveArrivalThreshold) {
+    // Check event lock - prevent re-emitting ARRIVED for same stop
+    const alreadyArrivedHere = state.lastEventStopId === currentStopId && 
+                               state.lastEventType === 'ARRIVED';
+    
+    if (!alreadyArrivedHere && (isNewStop || !state.status || state.status === 'DEPARTED')) {
+      // New arrival
+      emitStopEvent('ARRIVED', {
+        busId,
+        stopId: currentStopId,
+        stopName: getStopNameById(currentStopId),
+        distance: Math.round(distanceToStop),
+        threshold: effectiveArrivalThreshold,
+        arrivedAt: now
+      });
+      
+      state.currentStopId = currentStopId;
+      state.status = 'ARRIVED';
+      state.arrivedAt = now;
+      state.departedAt = null;
+      state.dwellSeconds = 0;
+      state.lastEventStopId = currentStopId;
+      state.lastEventType = 'ARRIVED';
+    } else if (state.status === 'ARRIVED' || state.status === 'DWELLING') {
+      // Still at stop - update to DWELLING after 5 seconds
+      const dwellSeconds = state.arrivedAt ? Math.round((now - state.arrivedAt) / 1000) : 0;
+      
+      if (dwellSeconds >= 5 && state.status !== 'DWELLING') {
+        emitStopEvent('DWELLING', {
+          busId,
+          stopId: currentStopId,
+          stopName: getStopNameById(currentStopId),
+          dwellSeconds,
+          updatedAt: now
+        });
+        
+        state.status = 'DWELLING';
+        state.dwellSeconds = dwellSeconds;
+      } else if (state.status === 'DWELLING') {
+        // Update dwell time while dwelling
+        state.dwellSeconds = dwellSeconds;
+      }
+    }
+  } else if (distanceToStop > effectiveHysteresis && state.currentStopId === currentStopId) {
+    // DEPARTURE detection: moved past hysteresis threshold
+    if (state.status === 'ARRIVED' || state.status === 'DWELLING') {
+      const dwellSeconds = state.arrivedAt ? Math.round((now - state.arrivedAt) / 1000) : 0;
+      
+      emitStopEvent('DEPARTED', {
+        busId,
+        stopId: currentStopId,
+        stopName: getStopNameById(currentStopId),
+        dwellSeconds,
+        distance: Math.round(distanceToStop),
+        departedAt: now
+      });
+      
+      state.status = 'DEPARTED';
+      state.departedAt = now;
+      state.dwellSeconds = dwellSeconds;
+      state.lastEventStopId = currentStopId;
+      state.lastEventType = 'DEPARTED';
+    }
+    
+    // Update to APPROACHING for next stop
+    if (!state.status || state.status === 'DEPARTED') {
+      state.status = 'APPROACHING';
+      state.currentStopId = currentStopId;
+      
+      emitStopEvent('APPROACHING', {
+        busId,
+        stopId: currentStopId,
+        stopName: getStopNameById(currentStopId),
+        distance: Math.round(distanceToStop),
+        threshold: effectiveArrivalThreshold
+      });
+    }
+  }
+}
+
 /**
  * Calculate GPS confidence level based on accuracy
  * @param {number} accuracy - GPS accuracy in meters
@@ -355,6 +551,7 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
   let currentStopIndex = -1;
   let nextStopIndex = -1;
   let passedStopIds = prevProgression?.passedStopIds || [];
+  let currentStopDistance = null; // Track distance for event engine
   
   // FORWARD-ONLY PROGRESSION LOGIC
   // Start from previous position and only move forward
@@ -375,6 +572,7 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
         currentStopIndex = i;
         nextStopIndex = (i + 1 < stopDistances.length) ? i + 1 : -1;
       }
+      currentStopDistance = stop.distance; // Record distance for event engine
       break; // Found current stop, stop searching
     }
     
@@ -402,7 +600,7 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
     nextStopIndex = 0;
   }
   
-  return { currentStopIndex, nextStopIndex, passedStopIds };
+  return { currentStopIndex, nextStopIndex, passedStopIds, currentStopDistance };
 }
 
 /**
@@ -546,6 +744,15 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       lastUpdate: Date.now()
     };
     
+    // STOP EVENT ENGINE: Detect ARRIVAL, DWELLING, DEPARTURE lifecycle events
+    updateStopEventState(
+      busId,
+      progression,
+      stopProgress.currentStopDistance,
+      effectiveArrivalThreshold,
+      effectiveHysteresis
+    );
+    
     // Store updated progression
     setBusProgression(busId, progression);
     
@@ -595,6 +802,7 @@ module.exports = {
   hasProgressionChanged,
   projectOntoRouteCorridor,
   snapToRouteCorridor, // Route corridor locking for visual positioning
+  onStopEvent, // Stop lifecycle event registration
   haversineDistance,
   GPS_JITTER_THRESHOLD_METERS // Export for unified use
 };

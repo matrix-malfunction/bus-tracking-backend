@@ -5,7 +5,7 @@ const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
 const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute, computeDerivedSpeed } = require("../utils/trackingState");
 const routes = require("../../data/routes"); // Route master data
-const { computeBusProgression, hasProgressionChanged, GPS_JITTER_THRESHOLD_METERS } = require("../utils/progressionEngine");
+const { computeBusProgression, hasProgressionChanged, GPS_JITTER_THRESHOLD_METERS, onStopEvent } = require("../utils/progressionEngine");
 // Speed comes directly from driver app - no backend recalculation needed
 
 const { chooseBestSource } = require("../services/hybridSourceSelector");
@@ -22,6 +22,26 @@ const STOP_THRESHOLD_METERS = 15;
 const MIN_TIME_DIFF_SEC = 3;
 // Use unified GPS jitter threshold from progression engine
 const JITTER_THRESHOLD_METERS = GPS_JITTER_THRESHOLD_METERS;
+
+// STOP EVENT ENGINE: Register callback to emit socket events
+// This creates backend-authoritative ARRIVAL/DEPARTURE/DWELLING/APPROACHING events
+onStopEvent((eventType, payload) => {
+  const { io } = require("../server");
+  if (io) {
+    io.emit("BUS_STOP_EVENT", {
+      type: eventType, // ARRIVED, DEPARTED, DWELLING, APPROACHING
+      ...payload,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Also log for debugging
+    console.log(`[BACKEND] BUS_STOP_EVENT emitted: ${eventType}`, {
+      busId: payload.busId,
+      stopId: payload.stopId,
+      stopName: payload.stopName
+    });
+  }
+});
 
 function logInfo(event, data = {}) {
   console.log(
