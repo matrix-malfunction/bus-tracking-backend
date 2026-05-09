@@ -3,7 +3,8 @@ const Route = require("../models/Route");
 const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
-const { isTrackingActive, setTrackingActive, getTrackingState, trackingState } = require("../utils/trackingState");
+const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute } = require("../utils/trackingState");
+const routes = require("../data/routes"); // Route master data
 // Speed comes directly from driver app - no backend recalculation needed
 
 const { chooseBestSource } = require("../services/hybridSourceSelector");
@@ -245,12 +246,23 @@ async function updateLocation(req, res) {
 
     // === SOCKET EMIT ===
     if (io && busId && Number.isFinite(numLat) && Number.isFinite(numLng)) {
+      // Check if bus has route assignment
+      const routeInfo = getBusRoute(busId);
+      
       const emitPayload = {
         busId: busId.trim(),
         latitude: numLat,
         longitude: numLng,
         speed: speed, // Driver-computed speed, no backend recalculation
         heading: Math.round(heading),
+        trackingActive: true,
+        ...(routeInfo && {
+          routeId: routeInfo.routeId,
+          routeName: routeInfo.routeName,
+          routeColor: routeInfo.routeColor,
+          direction: routeInfo.direction,
+          tripId: routeInfo.tripId
+        })
       };
       console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", emitPayload);
 
@@ -665,14 +677,48 @@ const startTracking = async (req, res) => {
     console.log("[BACKEND] ========== START TRACKING ==========");
     console.log("[BACKEND] req.body:", req.body);
     
-    const { busId, lat, lng } = req.body;
+    const { busId, lat, lng, routeId, direction } = req.body;
     if (!busId) {
       console.log("[BACKEND] ❌ Missing busId");
       return res.status(400).json({ error: "busId required" });
     }
     
+    // Validate route if provided
+    let routeData = null;
+    let assignedRoute = null;
+    
+    if (routeId) {
+      const route = routes.find(r => r.id === routeId);
+      if (!route) {
+        console.log("[BACKEND] ❌ Invalid routeId:", routeId);
+        return res.status(400).json({ error: "Invalid routeId" });
+      }
+      
+      // Validate direction
+      const validDirections = ["OUTBOUND", "INBOUND"];
+      if (!direction || !validDirections.includes(direction)) {
+        console.log("[BACKEND] ❌ Invalid direction:", direction);
+        return res.status(400).json({ error: "Invalid direction. Must be OUTBOUND or INBOUND" });
+      }
+      
+      routeData = {
+        routeId: route.id,
+        routeName: route.name,
+        routeColor: route.color,
+        direction: direction
+      };
+      
+      console.log("[BACKEND] Route validated:", route.name, "-", direction);
+    }
+    
     console.log("[BACKEND] Initializing tracking state for:", busId);
     setTrackingActive(busId, true);
+    
+    // Assign route if provided
+    if (routeData) {
+      assignedRoute = setBusRoute(busId, routeData);
+      console.log("[BACKEND] Route assigned:", assignedRoute.tripId);
+    }
     
     const io = req.app.get("io");
     
@@ -685,7 +731,14 @@ const startTracking = async (req, res) => {
           busId: busId.trim(),
           latitude: numLat,
           longitude: numLng,
-          trackingActive: true
+          trackingActive: true,
+          ...(assignedRoute && {
+            routeId: assignedRoute.routeId,
+            routeName: assignedRoute.routeName,
+            routeColor: assignedRoute.routeColor,
+            direction: assignedRoute.direction,
+            tripId: assignedRoute.tripId
+          })
         };
         console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE on start:", emitPayload);
         io.emit("BUS_LOCATION_UPDATE", emitPayload);
@@ -695,7 +748,16 @@ const startTracking = async (req, res) => {
     const newState = trackingState.get(busId);
     console.log("[BACKEND] ✅ Tracking started:", busId, "State:", newState);
     
-    return res.json({ success: true, message: "Tracking started", busId });
+    return res.json({ 
+      success: true, 
+      message: "Tracking started", 
+      busId,
+      ...(assignedRoute && {
+        tripId: assignedRoute.tripId,
+        routeName: assignedRoute.routeName,
+        direction: assignedRoute.direction
+      })
+    });
   } catch (err) {
     console.error("[BACKEND] 🔥 START TRACKING ERROR:", err.message);
     console.error("[BACKEND] Stack:", err.stack);

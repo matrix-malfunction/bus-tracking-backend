@@ -262,6 +262,85 @@ const isStateStale = (busId) => {
   return now - state.lastUpdate > TRACKING_STATE_TTL_MS;
 };
 
+/**
+ * Generate unique trip ID for route assignments
+ * Format: TRIP_{timestamp}_{random}
+ */
+const generateTripId = () => {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+  return `TRIP_${timestamp}_${random}`;
+};
+
+/**
+ * Set route assignment for a bus
+ * @param {string} busId - Bus identifier
+ * @param {object} routeData - { routeId, routeName, routeColor, direction }
+ * @returns {object} - Updated state with tripId
+ */
+const setBusRoute = (busId, routeData) => {
+  const prevState = trackingState.get(busId) || {};
+  const tripId = generateTripId();
+  
+  const nextState = {
+    ...prevState,
+    routeId: routeData.routeId,
+    routeName: routeData.routeName,
+    routeColor: routeData.routeColor,
+    direction: routeData.direction,
+    tripId: tripId,
+    currentStopIndex: 0, // Future-ready for stop progression
+    lastUpdate: Date.now(),
+  };
+  
+  trackingState.set(busId, nextState);
+  console.log(`[TRACKING STATE] Bus ${busId}: Route assigned - ${routeData.routeName} (${routeData.direction}), Trip: ${tripId}`);
+  
+  return { ...nextState, tripId };
+};
+
+/**
+ * Get route info for a bus
+ * @param {string} busId - Bus identifier
+ * @returns {object|null} - Route data or null
+ */
+const getBusRoute = (busId) => {
+  const state = trackingState.get(busId);
+  if (!state || !state.routeId) return null;
+  
+  return {
+    routeId: state.routeId,
+    routeName: state.routeName,
+    routeColor: state.routeColor,
+    direction: state.direction,
+    tripId: state.tripId,
+    currentStopIndex: state.currentStopIndex,
+  };
+};
+
+/**
+ * Clear route assignment for a bus (end shift)
+ * @param {string} busId - Bus identifier
+ */
+const clearBusRoute = (busId) => {
+  const prevState = trackingState.get(busId);
+  if (!prevState) return;
+  
+  const nextState = {
+    ...prevState,
+    routeId: null,
+    routeName: null,
+    routeColor: null,
+    direction: null,
+    tripId: null,
+    currentStopIndex: null,
+    lastUpdate: Date.now(),
+  };
+  
+  trackingState.set(busId, nextState);
+  console.log(`[TRACKING STATE] Bus ${busId}: Route cleared (shift ended)`);
+};
+
 module.exports = {
   setTrackingActive,
   setSosState,
@@ -273,6 +352,10 @@ module.exports = {
   cleanupStaleState,
   clearTrackingState,
   getAllTrackingStates,
+  setBusRoute,
+  getBusRoute,
+  clearBusRoute,
+  generateTripId,
   trackingState, // Export for raw access if needed
   TRACKING_STATE_TTL_MS
 };
