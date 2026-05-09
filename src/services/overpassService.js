@@ -179,7 +179,7 @@ const BUS_STOPS = [
   { id: "custom_stop_131", name: "Minjur New Bus Stop", lat: 13.2825, lng: 80.2539 },
   { id: "custom_stop_132", name: "Minjur BDO Office", lat: 13.2677, lng: 80.2647 },
 
-  { id: "custom_stop_133", name: "Central Prison Thorapadi", lat: 12.8734, lng: 79.1187 },
+  
   { id: "custom_stop_134", name: "Vellore Men's Jail", lat: 12.8881, lng: 79.1221 },
   { id: "custom_stop_135", name: "Women's Prison", lat: 12.8838, lng: 79.1232 },
   { id: "custom_stop_136", name: "Golden Temple Gate", lat: 12.8699, lng: 79.0882 },
@@ -192,7 +192,27 @@ const BUS_STOPS = [
   { id: "custom_stop_143", name: "Ponnai Bus Stop", lat: 13.1269, lng: 79.2553 },
   { id: "custom_stop_144", name: "Vellore Fort Main Gate", lat: 12.9220, lng: 79.1320 },
   { id: "custom_stop_145", name: "Kosapet Stop", lat: 12.9113, lng: 79.1305 },
-  { id: "custom_stop_146", name: "Samuel Nagar Bypass", lat: 12.9340, lng: 79.1436 }
+  { id: "custom_stop_146", name: "Samuel Nagar Bypass", lat: 12.9340, lng: 79.1436 },
+
+  // ===== THIRUVALLUR EXTENSION (APPEND ONLY) =====
+
+  { id: "custom_tvl_ext_001", name: "Thiruvallur Bus Stand", lat: 13.1386, lng: 79.9076 },
+  { id: "custom_tvl_ext_002", name: "Thiruvallur Terminal", lat: 13.1405, lng: 79.9080 },
+  { id: "custom_tvl_ext_003", name: "Thiruvallur Oil Mill Bus Stop", lat: 13.1227, lng: 79.9118 },
+  { id: "custom_tvl_ext_004", name: "Theradi Bus Stop", lat: 13.1433, lng: 79.9088 },
+  { id: "custom_tvl_ext_005", name: "Thiruvallur Court Bus Stop", lat: 13.1370, lng: 79.9176 },
+
+  // Same coordinate but different logical stop
+  { id: "custom_tvl_ext_006", name: "Thiruvallur Bustand (Kakkalur)", lat: 13.1227, lng: 79.9118 },
+
+  // These may already exist → still add as new custom IDs
+  { id: "custom_tvl_ext_007", name: "Manavalanagar Bus Stop", lat: 13.1126, lng: 79.9133 },
+  { id: "custom_tvl_ext_008", name: "Ondikuppam Bus Stop", lat: 13.1104, lng: 79.9180 },
+
+  { id: "custom_tvl_ext_009", name: "SBI Bus Stop (JN Road)", lat: 13.1354, lng: 79.9087 },
+
+  // Already exists earlier → still safe due to new ID
+  { id: "custom_tvl_ext_010", name: "Poonamallee Bus Stand", lat: 13.0517, lng: 80.0948 }
 ];
 
 /**
