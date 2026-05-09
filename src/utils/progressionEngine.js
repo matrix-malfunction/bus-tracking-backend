@@ -543,7 +543,60 @@ function projectPointOntoSegment(point, segmentStart, segmentEnd) {
  * Project GPS position onto route corridor
  * Returns: { projectedPoint, cumulativeDistance, segmentIndex, distanceFromCorridor }
  */
-function projectOntoRouteCorridor(busLat, busLng, routeCoordinates) {
+function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unknown") {
+  // ENTRY TELEMETRY
+  console.log("[PROJECTION ENTRY]", {
+    busId,
+    lat: busLat,
+    lng: busLng,
+    hasRouteCoords: !!routeCoordinates,
+    coordCount: routeCoordinates?.length || 0,
+    sample: routeCoordinates?.slice(0, 2)
+  });
+  
+  // Validate route coordinates exist
+  if (!routeCoordinates || !Array.isArray(routeCoordinates)) {
+    console.log("[PROJECTION EXIT]", "EMPTY_ROUTE", { busId });
+    return null;
+  }
+  
+  if (routeCoordinates.length < 2) {
+    console.log("[PROJECTION EXIT]", "INSUFFICIENT_ROUTE_COORDS", { 
+      busId, 
+      length: routeCoordinates.length 
+    });
+    return null;
+  }
+  
+  // Validate route coordinate structure
+  const invalidCoords = routeCoordinates.filter(
+    point =>
+      !Array.isArray(point) ||
+      point.length !== 2 ||
+      typeof point[0] !== "number" ||
+      typeof point[1] !== "number"
+  );
+  
+  if (invalidCoords.length > 0) {
+    console.log("[PROJECTION EXIT]", "INVALID_ROUTE_COORDS", {
+      busId,
+      invalidCount: invalidCoords.length,
+      invalidSample: invalidCoords.slice(0, 3),
+      validSample: routeCoordinates.filter(p => 
+        Array.isArray(p) && p.length === 2 && typeof p[0] === "number"
+      ).slice(0, 3)
+    });
+    return null;
+  }
+  
+  // Coordinate order telemetry
+  console.log("[COORD ORDER CHECK]", {
+    busId,
+    firstPoint: routeCoordinates[0],
+    lastPoint: routeCoordinates[routeCoordinates.length - 1],
+    expectedFormat: "[lat, lng]"
+  });
+  
   let minDistance = Infinity;
   let bestProjection = null;
   let cumulativeDistance = 0;
@@ -584,14 +637,35 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates) {
       bestProjection.point[0], bestProjection.point[1]
     );
     
-    return {
+    const result = {
       projectedPoint: bestProjection.point,
       cumulativeDistance: segmentStartDistance + projectedPointToStart,
       segmentIndex: bestSegmentIndex,
       distanceFromCorridor: minDistance,
       totalRouteLength: cumulativeDistance
     };
+    
+    // PROJECTION RESULT TELEMETRY
+    console.log("[PROJECTION RESULT]", {
+      busId,
+      projectedPoint: result.projectedPoint,
+      distanceFromRoute: result.distanceFromCorridor,
+      routeProgressIndex: result.segmentIndex,
+      isValidProjection:
+        !!result.projectedPoint &&
+        Array.isArray(result.projectedPoint) &&
+        result.projectedPoint.length === 2
+    });
+    
+    return result;
   }
+  
+  // No valid projection found
+  console.log("[PROJECTION EXIT]", "NO_CLOSEST_SEGMENT", {
+    busId,
+    minDistance,
+    coordCount: routeCoordinates.length
+  });
   
   return null;
 }
@@ -860,10 +934,10 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   const speedKmh = speedMps * 3.6;
   
   // Project bus position onto route corridor (using normalized coordinates)
-  const projection = projectOntoRouteCorridor(busLat, busLng, normalizedRoute.routeCoords);
+  const projection = projectOntoRouteCorridor(busLat, busLng, normalizedRoute.routeCoords, busId);
   
   if (!projection) {
-    console.log(`[Progression] Failed to project bus ${busId} onto route`);
+    console.log("[PROGRESSION EXIT]", "PROJECTION_FAILED", { busId });
     return null;
   }
   
