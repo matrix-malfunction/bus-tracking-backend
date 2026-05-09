@@ -271,6 +271,10 @@ async function updateLocation(req, res) {
       // Check if bus has route assignment
       const routeInfo = getBusRoute(busId);
       
+      // Get route coordinates from routes data if route assigned
+      const routeData = routeInfo ? routes.find(r => r.id === routeInfo.routeId) : null;
+      const routeCoords = routeData?.coordinates || null;
+      
       const emitPayload = {
         busId: busId.trim(),
         latitude: numLat,
@@ -284,7 +288,8 @@ async function updateLocation(req, res) {
           routeName: routeInfo.routeName,
           routeColor: routeInfo.routeColor,
           direction: routeInfo.direction,
-          tripId: routeInfo.tripId
+          tripId: routeInfo.tripId,
+          routeCoords: routeCoords // Active route corridor coordinates
         }),
         // Include progression fields for live stop display
         ...(progression && {
