@@ -7,12 +7,31 @@
 
 const routes = require("../../data/routes");
 const { getBusProgression, setBusProgression, addSpeedSample, getRollingAverageSpeed } = require("./trackingState");
-const { getStopNameById } = require("../services/overpassService");
+const { getStopNameById, ALL_STOPS } = require("../services/overpassService");
 
 // Hysteresis thresholds
 const MIN_ADVANCEMENT_METERS = 50; // Must advance 50m before updating stop index
 const GPS_JITTER_THRESHOLD_METERS = 15; // Unified threshold: ignore movements less than 15m
 const MIN_SPEED_KMH = 5; // Minimum operational speed for ETA calculation
+
+// STOP ARRIVAL DETECTION thresholds
+const STOP_ARRIVAL_THRESHOLD_METERS = 40; // Bus must be within 40m to be "at" stop
+const STOP_ADVANCE_HYSTERESIS_METERS = 60; // Must advance 60m past stop to move to next
+
+// Build stop coordinate lookup map
+const STOP_COORDS_MAP = new Map(
+  ALL_STOPS.map(stop => [String(stop.id), { lat: stop.lat, lng: stop.lng }])
+);
+
+/**
+ * Get stop coordinates by ID
+ * @param {string} stopId - Stop identifier
+ * @returns {{lat: number, lng: number} | null}
+ */
+function getStopCoordsById(stopId) {
+  if (!stopId) return null;
+  return STOP_COORDS_MAP.get(String(stopId)) || null;
+}
 
 /**
  * Calculate distance between two points using Haversine formula
@@ -133,63 +152,84 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates) {
 
 /**
  * Determine current and next stop based on projected position
+ * Uses forward-only progression with arrival thresholds
  */
-function determineStopProgression(projection, routeStops, stopCoords, prevProgression) {
-  const { cumulativeDistance, totalRouteLength } = projection;
-  const prevStopIndex = prevProgression?.currentStopIndex ?? -1;
+function determineStopProgression(projection, routeStops, prevProgression) {
+  const { projectedPoint } = projection;
+  const prevCurrentIndex = prevProgression?.currentStopIndex ?? -1;
+  const prevNextIndex = prevProgression?.nextStopIndex ?? -1;
+  
+  // Get stop coordinates array for this route
+  const stopCoords = routeStops.map(id => getStopCoordsById(id)).filter(Boolean);
+  if (stopCoords.length === 0) {
+    return { currentStopIndex: -1, nextStopIndex: -1, passedStopIds: [] };
+  }
+  
+  // Calculate distance from bus to each stop
+  const stopDistances = stopCoords.map((coord, index) => {
+    const distance = haversineDistance(
+      projectedPoint[0], projectedPoint[1],
+      coord.lat, coord.lng
+    );
+    return { index, stopId: routeStops[index], distance };
+  });
+  
+  // Find nearest stop
+  const nearest = stopDistances.reduce((best, current) => 
+    current.distance < best.distance ? current : best
+  );
   
   let currentStopIndex = -1;
   let nextStopIndex = -1;
-  let passedStopIds = [];
+  let passedStopIds = prevProgression?.passedStopIds || [];
   
-  // Calculate distance to each stop along route
-  const stopDistances = stopCoords.map((coord, index) => {
-    // Find closest point on route to this stop
-    const stopProjection = projectOntoRouteCorridor(
-      coord[0],
-      coord[1],
-      routeCoordinates
-    );
-    return {
-      index,
-      stopId: routeStops[index],
-      distance: cumulativeDistance // Approximation - stops should be near route
-    };
-  });
+  // FORWARD-ONLY PROGRESSION LOGIC
+  // Start from previous position and only move forward
+  const startIndex = Math.max(0, prevCurrentIndex);
   
-  // Find current stop (last stop we've passed)
-  for (let i = 0; i < stopDistances.length; i++) {
-    // A stop is considered "passed" if we've traveled past its position
-    const stopPositionRatio = i / (stopDistances.length - 1 || 1);
-    const currentPositionRatio = cumulativeDistance / totalRouteLength;
+  // Check if we've arrived at or passed any stop
+  for (let i = startIndex; i < stopDistances.length; i++) {
+    const stop = stopDistances[i];
     
-    if (currentPositionRatio >= stopPositionRatio - 0.05) { // 5% buffer
-      currentStopIndex = i;
-      passedStopIds.push(routeStops[i]);
+    // Check if bus is at this stop (within arrival threshold)
+    if (stop.distance <= STOP_ARRIVAL_THRESHOLD_METERS) {
+      // Arrived at stop i
+      if (currentStopIndex !== i) {
+        // Moving to new stop - previous current becomes passed
+        if (currentStopIndex >= 0 && !passedStopIds.includes(routeStops[currentStopIndex])) {
+          passedStopIds = [...passedStopIds, routeStops[currentStopIndex]];
+        }
+        currentStopIndex = i;
+        nextStopIndex = (i + 1 < stopDistances.length) ? i + 1 : -1;
+      }
+      break; // Found current stop, stop searching
+    }
+    
+    // Check if we've advanced past a stop (beyond hysteresis)
+    if (i === startIndex && prevCurrentIndex >= 0 && stop.distance > STOP_ADVANCE_HYSTERESIS_METERS) {
+      // We've moved past the previous current stop
+      if (!passedStopIds.includes(routeStops[i])) {
+        passedStopIds = [...passedStopIds, routeStops[i]];
+      }
+      // Continue to find next stop
+      continue;
+    }
+    
+    // Check if this is the next upcoming stop
+    if (stop.distance > STOP_ARRIVAL_THRESHOLD_METERS && currentStopIndex < 0) {
+      // Haven't arrived at any stop yet, this is the next one
+      nextStopIndex = i;
+      break;
     }
   }
   
-  // GPS Jitter Protection: Hysteresis
-  // Only advance stop index, never go backwards
-  if (prevStopIndex > currentStopIndex) {
-    // GPS jitter trying to move backwards - lock to previous
-    currentStopIndex = prevStopIndex;
-    // Recalculate passed stops
-    passedStopIds = routeStops.slice(0, currentStopIndex + 1);
+  // Handle edge cases
+  if (currentStopIndex < 0 && nextStopIndex < 0) {
+    // Before first stop
+    nextStopIndex = 0;
   }
   
-  // Determine next stop
-  nextStopIndex = currentStopIndex + 1;
-  if (nextStopIndex >= routeStops.length) {
-    nextStopIndex = -1; // End of route
-  }
-  
-  return {
-    currentStopIndex,
-    nextStopIndex,
-    passedStopIds,
-    remainingStops: routeStops.length - currentStopIndex - 1
-  };
+  return { currentStopIndex, nextStopIndex, passedStopIds };
 }
 
 /**
@@ -283,7 +323,6 @@ function computeBusProgression(busId, busLat, busLng, speedKmh) {
     const stopProgress = determineStopProgression(
       projection,
       route.stops,
-      route.coordinates,
       prevProgression
     );
     
