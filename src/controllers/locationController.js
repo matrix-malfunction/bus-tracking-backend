@@ -387,6 +387,7 @@ async function updateLocation(req, res) {
           nextStopName: progression.nextStopName,
           passedStopIds: progression.passedStopIds,
           nextStopEtaMinutes: progression.etaMinutes,
+          remainingDistanceMeters: progression.remainingDistanceMeters,
           routeProgressIndex: progression.currentStopIndex,
           remainingDistanceKm: progression.remainingDistanceKm,
           progressPercent: progression.progressPercent,

@@ -27,6 +27,10 @@ const ROUTE_SNAP_MAX_DISTANCE_METERS = 150; // Hard cutoff - beyond this, no sna
 // Per-bus stop event state for lifecycle tracking (APPROACHING -> ARRIVED -> DWELLING -> DEPARTED)
 const stopEventState = new Map();
 
+// ETA STATE
+// Per-bus ETA state for stable predictions
+const etaState = new Map();
+
 // Event callback registry - external consumers register here
 const eventCallbacks = [];
 
@@ -51,6 +55,95 @@ function emitStopEvent(eventType, payload) {
     } catch (err) {
       console.error("[STOP EVENT] Callback error:", err.message);
     }
+  });
+}
+
+/**
+ * Get or initialize ETA state for a bus
+ * @param {string} busId - Bus identifier
+ * @returns {object} - ETA state
+ */
+function getEtaState(busId) {
+  if (!etaState.has(busId)) {
+    etaState.set(busId, {
+      rollingSpeedKmh: 20, // Default 20 km/h
+      lastEtaMinutes: null,
+      lastEtaTime: null,
+      nextStopId: null,
+      hasApproached: new Map() // Track which stops we've approached
+    });
+  }
+  return etaState.get(busId);
+}
+
+/**
+ * Compute stable ETA with rolling speed smoothing
+ * @param {string} busId - Bus identifier
+ * @param {number} nextStopId - Next stop ID
+ * @param {number} remainingDistanceMeters - Distance to next stop in meters
+ * @param {number} currentSpeedKmh - Current speed from GPS
+ * @returns {{etaMinutes: number, remainingDistanceMeters: number}} - ETA calculation
+ */
+function computeEta(busId, nextStopId, remainingDistanceMeters, currentSpeedKmh) {
+  const state = getEtaState(busId);
+  
+  // Update rolling speed with smoothing (ignore very slow speeds < 3 km/h)
+  let effectiveSpeed = currentSpeedKmh;
+  if (currentSpeedKmh < 3) {
+    effectiveSpeed = state.rollingSpeedKmh; // Use last known rolling speed
+  }
+  
+  // Rolling average: 70% old + 30% new
+  state.rollingSpeedKmh = (state.rollingSpeedKmh * 0.7) + (effectiveSpeed * 0.3);
+  
+  // Minimum speed for ETA calculation (avoid infinite ETA when stopped)
+  const minSpeedForEta = 5; // 5 km/h minimum
+  const speedForEta = Math.max(state.rollingSpeedKmh, minSpeedForEta);
+  
+  // Calculate ETA in minutes
+  // distance (m) / (speed (km/h) * 1000 / 60) = minutes
+  let etaMinutes = (remainingDistanceMeters / 1000) / (speedForEta / 60);
+  
+  // Clamp ETA to reasonable range
+  etaMinutes = Math.max(1, Math.min(120, Math.round(etaMinutes)));
+  
+  // Reset approach tracking if next stop changed
+  if (state.nextStopId !== nextStopId) {
+    state.nextStopId = nextStopId;
+    state.hasApproached = new Map();
+  }
+  
+  return {
+    etaMinutes,
+    remainingDistanceMeters: Math.round(remainingDistanceMeters),
+    rollingSpeedKmh: Math.round(state.rollingSpeedKmh * 10) / 10
+  };
+}
+
+/**
+ * Check for APPROACHING event (within 2 minutes of stop)
+ * @param {string} busId - Bus identifier
+ * @param {string} nextStopId - Next stop ID
+ * @param {number} etaMinutes - Current ETA
+ * @param {string} nextStopName - Name of next stop
+ */
+function checkApproachingEvent(busId, nextStopId, etaMinutes, nextStopName) {
+  if (!nextStopId || etaMinutes > 2) return; // Not approaching yet
+  
+  const state = getEtaState(busId);
+  
+  // Event lock: only emit APPROACHING once per stop
+  if (state.hasApproached.has(nextStopId)) return;
+  
+  // Mark as approached
+  state.hasApproached.set(nextStopId, true);
+  
+  emitStopEvent('APPROACHING', {
+    busId,
+    stopId: nextStopId,
+    stopName: nextStopName,
+    etaMinutes,
+    approachedAt: Date.now()
   });
 }
 
@@ -704,8 +797,27 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       (projection.cumulativeDistance / projection.totalRouteLength) * 100
     );
     
-    // Calculate ETA
-    const { etaMinutes, avgSpeedKmh } = calculateETA(remainingDistanceKm, busId);
+    // Calculate ETA using stable rolling speed smoothing
+    // Get distance to next stop (if available), otherwise use remaining route distance
+    let nextStopDistanceMeters = 0;
+    if (stopProgress.nextStopIndex >= 0 && stopDistances[stopProgress.nextStopIndex]) {
+      nextStopDistanceMeters = stopDistances[stopProgress.nextStopIndex].distance;
+    } else if (stopProgress.currentStopDistance !== null) {
+      // No next stop, use current stop distance
+      nextStopDistanceMeters = stopProgress.currentStopDistance;
+    }
+    
+    const { etaMinutes, remainingDistanceMeters, rollingSpeedKmh } = computeEta(
+      busId,
+      nextStopId,
+      nextStopDistanceMeters,
+      speedKmh
+    );
+    
+    // Check for APPROACHING event (within 2 minutes of stop)
+    checkApproachingEvent(busId, nextStopId, etaMinutes, nextStopName);
+    
+    const avgSpeedKmh = rollingSpeedKmh;
     
     // Get stop names for display
     const currentStopId = stopProgress.currentStopIndex >= 0 ? route.stops[stopProgress.currentStopIndex] : null;
@@ -719,33 +831,60 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       accuracy || 0
     );
 
-    // Build progression result
-    const progression = {
-      busId,
-      gpsConfidence,
-      gpsAccuracy: accuracy || null,
-      effectiveThreshold,
-      tripId: state.tripId,
-      routeId: state.routeId,
-      currentStopIndex: stopProgress.currentStopIndex,
-      currentStopId,
-      currentStopName,
-      nextStopIndex: stopProgress.nextStopIndex,
-      nextStopId,
-      nextStopName,
-      passedStopIds: stopProgress.passedStopIds,
-      remainingDistanceKm: Math.round(remainingDistanceKm * 100) / 100,
-      progressPercent,
-      etaMinutes,
-      avgSpeedKmh,
-      cumulativeDistance: Math.round(projection.cumulativeDistance),
-      totalRouteLength: Math.round(projection.totalRouteLength),
-      lastProjectedPoint: projection.projectedPoint,
-      lastUpdate: Date.now()
-    };
-    
-    // STOP EVENT ENGINE: Detect ARRIVAL, DWELLING, DEPARTURE lifecycle events
-    updateStopEventState(
+  // Build progression result
+  const progression = {
+    busId,
+    gpsConfidence,
+    gpsAccuracy: accuracy || null,
+    effectiveThreshold,
+    tripId: state.tripId,
+    routeId: state.routeId,
+    currentStopIndex: stopProgress.currentStopIndex,
+    currentStopId,
+    currentStopName,
+    nextStopIndex: stopProgress.nextStopIndex,
+    nextStopId,
+    nextStopName,
+    passedStopIds: stopProgress.passedStopIds,
+    remainingDistanceKm: Math.round(remainingDistanceKm * 100) / 100,
+    remainingDistanceMeters, // Distance to next stop
+    progressPercent,
+    etaMinutes,
+    avgSpeedKmh: Math.round(avgSpeedKmh * 10) / 10,
+    cumulativeDistance: Math.round(projection.cumulativeDistance),
+    totalRouteLength: Math.round(projection.totalRouteLength),
+    lastProjectedPoint: projection.projectedPoint,
+    lastUpdate: Date.now(),
+    jitterFiltered
+  };
+  
+  // STOP EVENT ENGINE: Detect ARRIVAL, DWELLING, DEPARTURE lifecycle events
+  updateStopEventState(
+    busId,
+    progression,
+    stopProgress.currentStopDistance,
+    effectiveArrivalThreshold,
+    effectiveHysteresis
+  );
+  
+  // Store updated progression
+  setBusProgression(busId, progression);
+  
+  // Debug instrumentation
+  console.log("[PROGRESSION]", {
+    busId,
+    currentStopIndex: progression.currentStopIndex,
+    nextStopIndex: progression.nextStopIndex,
+    remainingDistanceKm: progression.remainingDistanceKm,
+    progressPercent: progression.progressPercent + "%",
+    etaMinutes: progression.etaMinutes + "min",
+    avgSpeed: avgSpeedKmh + "km/h",
+    cumulativeDistance: Math.round(projection.cumulativeDistance) + "m",
+    totalRouteLength: Math.round(projection.totalRouteLength) + "m",
+    jitterFiltered
+  });
+  
+  return progression;
       busId,
       progression,
       stopProgress.currentStopDistance,
