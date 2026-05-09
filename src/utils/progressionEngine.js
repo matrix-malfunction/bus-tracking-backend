@@ -248,6 +248,7 @@ function computeBusProgression(busId, busLat, busLng, speedKmh) {
     }
     
     // GPS Jitter Check: Ignore tiny movements
+    let jitterFiltered = false;
     if (prevProgression?.lastProjectedPoint) {
       const moveDistance = haversineDistance(
         prevProgression.lastProjectedPoint[0],
@@ -258,6 +259,13 @@ function computeBusProgression(busId, busLat, busLng, speedKmh) {
       
       if (moveDistance < GPS_JITTER_THRESHOLD_METERS) {
         // Too small to process - return previous progression with updated time
+        jitterFiltered = true;
+        console.log("[PROGRESSION JITTER]", {
+          busId,
+          moveDistance: Math.round(moveDistance) + "m",
+          threshold: GPS_JITTER_THRESHOLD_METERS + "m",
+          action: "filtered"
+        });
         return {
           ...prevProgression,
           lastUpdate: Date.now(),
@@ -305,6 +313,20 @@ function computeBusProgression(busId, busLat, busLng, speedKmh) {
     
     // Store updated progression
     setBusProgression(busId, progression);
+    
+    // Debug instrumentation
+    console.log("[PROGRESSION]", {
+      busId,
+      currentStopIndex: progression.currentStopIndex,
+      nextStopIndex: progression.nextStopIndex,
+      remainingDistanceKm: progression.remainingDistanceKm,
+      progressPercent: progression.progressPercent + "%",
+      etaMinutes: progression.etaMinutes + "min",
+      avgSpeed: avgSpeedKmh + "km/h",
+      cumulativeDistance: Math.round(projection.cumulativeDistance) + "m",
+      totalRouteLength: Math.round(projection.totalRouteLength) + "m",
+      jitterFiltered
+    });
     
     return progression;
   } catch (err) {
