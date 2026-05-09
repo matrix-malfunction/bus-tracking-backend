@@ -151,7 +151,48 @@ const BUS_STOPS = [
   { id: "custom_tvl_016", name: "Red Hills Market Bus Stop", lat: 13.1895, lng: 80.1874 },
   { id: "custom_tvl_017", name: "Red Hills – Thiruvallur Road Junction", lat: 13.1966, lng: 80.1810 },
   { id: "custom_tvl_018", name: "Gummidipoondi Bus Stop", lat: 13.4084, lng: 80.1268 },
-  { id: "custom_tvl_019", name: "Rettempedu Road Junction", lat: 13.4128, lng: 80.1270 }
+  { id: "custom_tvl_019", name: "Rettempedu Road Junction", lat: 13.4128, lng: 80.1270 },
+
+  // ===== CONTINUOUS CUSTOM EXTENSION =====
+
+  { id: "custom_stop_111", name: "Kangeyanallur Bus Stop", lat: 12.9532, lng: 79.1524 },
+  { id: "custom_stop_112", name: "Anaicut New Bus Stand", lat: 12.8762, lng: 78.9882 },
+  { id: "custom_stop_113", name: "Raja Theatre Bus Stop", lat: 12.9148, lng: 79.1324 },
+  { id: "custom_stop_114", name: "Thottapalayam Area Bus Stop", lat: 12.9288, lng: 79.1340 },
+  { id: "custom_stop_115", name: "Staff Bus Stop (IDA Scudder Rd)", lat: 12.9251, lng: 79.1369 },
+  { id: "custom_stop_116", name: "CMC Bus Stop", lat: 12.9245, lng: 79.1333 },
+  { id: "custom_stop_117", name: "Vellore Mofussil Bus Terminus", lat: 12.9346, lng: 79.1384 },
+  { id: "custom_stop_118", name: "Tirupattur Bus Stand", lat: 12.4962, lng: 78.5695 },
+  { id: "custom_stop_119", name: "Tirupattur Old Bus Stand", lat: 12.4973, lng: 78.5686 },
+  { id: "custom_stop_120", name: "Tirupattur Pudupattai Road", lat: 12.4897, lng: 78.5647 },
+  { id: "custom_stop_121", name: "Pernambut Bus Stand", lat: 12.9392, lng: 78.7190 },
+
+  { id: "custom_stop_122", name: "Ennore Bus Terminal", lat: 13.2148, lng: 80.3208 },
+  { id: "custom_stop_123", name: "Ernavoor Bus Stop", lat: 13.1909, lng: 80.3106 },
+  { id: "custom_stop_124", name: "Ponneri Main", lat: 13.3292, lng: 80.1876 },
+  { id: "custom_stop_125", name: "Ponneri Market", lat: 13.3353, lng: 80.1903 },
+  { id: "custom_stop_126", name: "Ponneri Taluk Office", lat: 13.3319, lng: 80.1945 },
+  { id: "custom_stop_127", name: "Thiruvayarpadi Bus Stop", lat: 13.3390, lng: 80.1944 },
+  { id: "custom_stop_128", name: "Krishnapuram Bus Stand", lat: 13.3198, lng: 80.1825 },
+  { id: "custom_stop_129", name: "Minjur Bus Stand", lat: 13.2821, lng: 80.2538 },
+  { id: "custom_stop_130", name: "Minjur Market", lat: 13.2790, lng: 80.2601 },
+  { id: "custom_stop_131", name: "Minjur New Bus Stop", lat: 13.2825, lng: 80.2539 },
+  { id: "custom_stop_132", name: "Minjur BDO Office", lat: 13.2677, lng: 80.2647 },
+
+  { id: "custom_stop_133", name: "Central Prison Thorapadi", lat: 12.8734, lng: 79.1187 },
+  { id: "custom_stop_134", name: "Vellore Men's Jail", lat: 12.8881, lng: 79.1221 },
+  { id: "custom_stop_135", name: "Women's Prison", lat: 12.8838, lng: 79.1232 },
+  { id: "custom_stop_136", name: "Golden Temple Gate", lat: 12.8699, lng: 79.0882 },
+  { id: "custom_stop_137", name: "Vellore Fort Terminus", lat: 12.9221, lng: 79.1322 },
+  { id: "custom_stop_138", name: "Infantry Road Stop", lat: 12.9113, lng: 79.1305 },
+  { id: "custom_stop_139", name: "Kagithapatarai Bypass", lat: 12.9338, lng: 79.1436 },
+  { id: "custom_stop_140", name: "Vellore Cantonment Station", lat: 12.9107, lng: 79.1276 },
+  { id: "custom_stop_141", name: "Thottapalayam Bypass", lat: 12.9328, lng: 79.1369 },
+  { id: "custom_stop_142", name: "Thangal VIT Area", lat: 12.9659, lng: 79.1663 },
+  { id: "custom_stop_143", name: "Ponnai Bus Stop", lat: 13.1269, lng: 79.2553 },
+  { id: "custom_stop_144", name: "Vellore Fort Main Gate", lat: 12.9220, lng: 79.1320 },
+  { id: "custom_stop_145", name: "Kosapet Stop", lat: 12.9113, lng: 79.1305 },
+  { id: "custom_stop_146", name: "Samuel Nagar Bypass", lat: 12.9340, lng: 79.1436 }
 ];
 
 /**
