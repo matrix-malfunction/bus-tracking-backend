@@ -5,7 +5,7 @@
  * Projects bus position onto route corridor and computes stop progression.
  */
 
-const routes = require("../data/routes");
+const routes = require("../../data/routes");
 const { getBusProgression, setBusProgression, addSpeedSample, getRollingAverageSpeed } = require("./trackingState");
 
 // Hysteresis thresholds
