@@ -171,6 +171,8 @@ async function fetchBusStopsFromOverpass() {
 
     const req = https.request(options, (res) => {
       let data = '';
+      
+      console.log(`[Overpass] API response status: ${res.statusCode}`);
 
       res.on('data', (chunk) => {
         data += chunk;
@@ -179,14 +181,18 @@ async function fetchBusStopsFromOverpass() {
       res.on('end', () => {
         try {
           const json = JSON.parse(data);
+          const elements = json.elements || [];
+          console.log(`[Overpass] API returned ${elements.length} elements`);
           resolve(json);
         } catch (error) {
+          console.error('[Overpass] Failed to parse response:', error.message);
           reject(new Error('Failed to parse Overpass API response'));
         }
       });
     });
 
     req.on('error', (error) => {
+      console.error('[Overpass] Request error:', error.message);
       reject(error);
     });
 
@@ -200,6 +206,8 @@ async function fetchBusStopsFromOverpass() {
  */
 function normalizeBusStops(osmData) {
   if (!osmData.elements || !Array.isArray(osmData.elements)) {
+    console.warn('[Overpass] normalizeBusStops: Missing or invalid elements array');
+    console.warn('[Overpass] osmData keys:', Object.keys(osmData));
     return [];
   }
 
@@ -248,14 +256,22 @@ async function getBusStops() {
   } catch (error) {
     console.error('[Overpass] Error fetching bus stops:', error.message);
 
-    // Return cached data even if expired as fallback
+    // Fallback: Use expired cache + BUS_STOPS (never return BUS_STOPS alone)
     if (cache.data) {
-      console.log('[Overpass] Using expired cache as fallback');
-      return cache.data;
+      console.log('[Overpass] Using expired cache + BUS_STOPS as fallback');
+      const expiredStops = cache.data;
+      const curatedOnly = expiredStops.filter(s => s.id && !/^\d+$/.test(s.id));
+      const overpassFromCache = expiredStops.filter(s => s.id && /^\d+$/.test(s.id));
+      console.log(`[Overpass] Cache contains: ${overpassFromCache.length} overpass + ${curatedOnly.length} curated`);
+      
+      // Return expired cache (already merged)
+      return expiredStops;
     }
 
-    // Return curated stops as emergency fallback
-    console.log('[Overpass] Using BUS_STOPS as emergency fallback');
+    // No cache available - this means we have NO overpass stops
+    // Return empty array + BUS_STOPS to maintain consistent structure
+    console.error('[Overpass] CRITICAL: No cache and Overpass failed. Returning BUS_STOPS only.');
+    console.error('[Overpass] Original Overpass stops will be MISSING from dataset');
     return BUS_STOPS;
   }
 }
