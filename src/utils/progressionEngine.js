@@ -612,8 +612,9 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
   
   // GPS ACCURACY-AWARE THRESHOLDS
   // Use dynamic threshold based on GPS quality
+  // TEMPORARY: Increased to 80m for diagnostic tolerance
   const effectiveArrivalThreshold = Math.max(
-    STOP_ARRIVAL_THRESHOLD_METERS,
+    80, // TEMPORARY: Increased from STOP_ARRIVAL_THRESHOLD_METERS (40)
     accuracy || 0
   );
   const effectiveHysteresis = Math.max(
@@ -640,6 +641,15 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
   const nearest = stopDistances.reduce((best, current) => 
     current.distance < best.distance ? current : best
   );
+  
+  // DIAGNOSTIC TELEMETRY: Stop matching
+  console.log("[STOP MATCH]", {
+    nearestStopId: nearest?.stopId || null,
+    nearestDistance: nearest?.distance ? Math.round(nearest.distance) : null,
+    threshold: effectiveArrivalThreshold,
+    stopCount: stopDistances.length,
+    stopNames: stopDistances.map(s => ({ id: s.stopId, dist: Math.round(s.distance) }))
+  });
   
   let currentStopIndex = -1;
   let nextStopIndex = -1;
@@ -781,6 +791,15 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       }
     }
     
+    // DIAGNOSTIC TELEMETRY: Route stops ordering
+    if (route.stops && route.stops.length > 0) {
+      console.log("[ROUTE STOPS]", route.stops.map((s, i) => ({
+        index: i,
+        id: s,
+        name: getStopNameById(s)
+      })));
+    }
+    
     // Determine stop progression with GPS accuracy awareness
     const stopProgress = determineStopProgression(
       projection,
@@ -857,6 +876,18 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     lastUpdate: Date.now(),
     jitterFiltered
   };
+  
+  // DIAGNOSTIC TELEMETRY: Progression result
+  console.log("[PROGRESSION RESULT]", {
+    busId,
+    currentStopId: progression.currentStopId,
+    currentStopName: progression.currentStopName,
+    nextStopId: progression.nextStopId,
+    nextStopName: progression.nextStopName,
+    passedStops: progression.passedStopIds?.length || 0,
+    eta: progression.etaMinutes || null,
+    progress: progression.progressPercent + "%"
+  });
   
   // STOP EVENT ENGINE: Detect ARRIVAL, DWELLING, DEPARTURE lifecycle events
   updateStopEventState(
