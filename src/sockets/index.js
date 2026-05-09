@@ -3,6 +3,13 @@ const { getBusStops } = require('../services/overpassService');
 async function emitBusStops(socket) {
   try {
     const stops = await getBusStops();
+    console.log(`[Socket] emitBusStops: ${stops.length} stops`);
+    
+    // Log sample stops for verification
+    const customStops = stops.filter(s => s.id && s.id.startsWith('custom_'));
+    console.log(`[Socket] Custom stops count: ${customStops.length}`);
+    console.log(`[Socket] Custom stops sample:`, customStops.slice(0, 3).map(s => s.id));
+    
     socket.emit("INIT_BUS_STOPS", { stops });
     console.log(`[Socket] Emitted ${stops.length} bus stops to ${socket.id}`);
   } catch (error) {
