@@ -285,6 +285,17 @@ async function updateLocation(req, res) {
           routeColor: routeInfo.routeColor,
           direction: routeInfo.direction,
           tripId: routeInfo.tripId
+        }),
+        // Include progression data if available
+        ...(progression && {
+          currentStopId: progression.currentStopId,
+          currentStopName: progression.currentStopName,
+          nextStopId: progression.nextStopId,
+          nextStopName: progression.nextStopName,
+          nextStopEtaMinutes: progression.etaMinutes,
+          completedStops: progression.completedStops,
+          routeProgressIndex: progression.routeProgressIndex,
+          avgSpeed: progression.avgSpeedKmh
         })
       };
       console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", emitPayload);

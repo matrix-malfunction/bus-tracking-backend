@@ -5,7 +5,7 @@
  * Projects bus position onto route corridor and computes stop progression.
  */
 
-const routes = require("../../data/routes");
+const { routes, STOP_NAMES } = require("../../data/routes");
 const { getBusProgression, setBusProgression, addSpeedSample, getRollingAverageSpeed } = require("./trackingState");
 
 // Hysteresis thresholds
@@ -297,14 +297,26 @@ function computeBusProgression(busId, busLat, busLng, speedKmh) {
     // Calculate ETA
     const { etaMinutes, avgSpeedKmh } = calculateETA(remainingDistanceKm, busId);
     
-    // Build progression result
+    // Map stop IDs to names
+    const currentStopId = stopProgress.currentStopIndex >= 0 ? route.stops[stopProgress.currentStopIndex] : null;
+    const nextStopId = stopProgress.nextStopIndex >= 0 ? route.stops[stopProgress.nextStopIndex] : null;
+    const currentStopName = currentStopId ? (STOP_NAMES[currentStopId] || currentStopId) : null;
+    const nextStopName = nextStopId ? (STOP_NAMES[nextStopId] || nextStopId) : null;
+
+    // Build progression result with stop names
     const progression = {
       busId,
       tripId: state.tripId,
       routeId: state.routeId,
+      currentStopId,
+      currentStopName,
+      nextStopId,
+      nextStopName,
       currentStopIndex: stopProgress.currentStopIndex,
       nextStopIndex: stopProgress.nextStopIndex,
       passedStopIds: stopProgress.passedStopIds,
+      completedStops: stopProgress.currentStopIndex + 1,
+      routeProgressIndex: stopProgress.currentStopIndex,
       remainingDistanceKm: Math.round(remainingDistanceKm * 100) / 100,
       progressPercent,
       etaMinutes,
