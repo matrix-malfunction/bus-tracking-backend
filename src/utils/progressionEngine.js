@@ -31,36 +31,46 @@ const stopEventState = new Map();
 const etaState = new Map();
 
 /**
- * Normalize coordinate to {lat, lng} format
- * Supports: [lat, lng], [lng, lat], {lat, lng}, {latitude, longitude}
+ * Normalize coordinate to {lat, lng} format (universal converter)
+ * Supports: {lat,lng}, {latitude,longitude}, [lat,lng], [lng,lat], {x,y}
  * Returns null if invalid
  */
-function normalizeCoordinate(coord) {
+function toLatLng(coord) {
   if (!coord) return null;
   
-  // Array format: [lat, lng] or [lng, lat]
-  if (Array.isArray(coord)) {
-    if (coord.length < 2) return null;
-    const [a, b] = coord;
-    if (typeof a !== 'number' || typeof b !== 'number') return null;
-    // Assume [lat, lng] - valid range check
-    if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b };
-    // Might be [lng, lat] - try swapping
-    if (Math.abs(a) <= 180 && Math.abs(b) <= 90) return { lat: b, lng: a };
-    // Return as-is if both in reasonable range
-    return { lat: a, lng: b };
-  }
-  
   // Object format: {lat, lng}, {latitude, longitude}, {x, y}
-  if (typeof coord === 'object') {
+  if (typeof coord === 'object' && !Array.isArray(coord)) {
     const lat = coord.lat ?? coord.latitude ?? coord.y ?? null;
     const lng = coord.lng ?? coord.longitude ?? coord.x ?? coord.lon ?? null;
-    if (typeof lat === 'number' && typeof lng === 'number') {
+    if (typeof lat === 'number' && typeof lng === 'number' && Number.isFinite(lat) && Number.isFinite(lng)) {
       return { lat, lng };
     }
   }
   
+  // Array format: [lat, lng] or [lng, lat]
+  if (Array.isArray(coord) && coord.length >= 2) {
+    const [a, b] = coord;
+    if (typeof a !== 'number' || typeof b !== 'number') return null;
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    
+    // Detect format by valid ranges
+    if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b }; // [lat, lng]
+    if (Math.abs(a) <= 180 && Math.abs(b) <= 90) return { lat: b, lng: a };  // [lng, lat]
+    
+    // Fallback: assume [lat, lng] if both in reasonable range
+    return { lat: a, lng: b };
+  }
+  
   return null;
+}
+
+/**
+ * Safe number converter - returns null for NaN/Infinity
+ */
+function safeNumber(value) {
+  if (typeof value !== 'number') return null;
+  if (!Number.isFinite(value)) return null;
+  return value;
 }
 
 /**
@@ -434,18 +444,11 @@ function snapToRouteCorridor(lat, lng, routeCoords) {
   
   // Find nearest segment with defensive validation
   for (let i = 0; i < routeCoords.length - 1; i++) {
-    const segmentStart = routeCoords[i];
-    const segmentEnd = routeCoords[i + 1];
+    const start = toLatLng(routeCoords[i]);
+    const end = toLatLng(routeCoords[i + 1]);
     
-    // Validate segment structure
-    if (!Array.isArray(segmentStart) || !Array.isArray(segmentEnd)) {
-      continue;
-    }
-    if (segmentStart.length < 2 || segmentEnd.length < 2) {
-      continue;
-    }
-    if (!Number.isFinite(segmentStart[0]) || !Number.isFinite(segmentStart[1]) ||
-        !Number.isFinite(segmentEnd[0]) || !Number.isFinite(segmentEnd[1])) {
+    // Skip invalid segments
+    if (!start || !end) {
       continue;
     }
     
@@ -453,25 +456,24 @@ function snapToRouteCorridor(lat, lng, routeCoords) {
     let projection = null;
     try {
       projection = projectPointOntoSegment(
-        [lat, lng],
-        segmentStart,
-        segmentEnd
+        { lat, lng },
+        start,
+        end
       );
     } catch (err) {
       // Skip this segment if projection fails
       continue;
     }
     
-    if (projection && projection.distance < minDistance && 
+    if (projection && projection.point && projection.distance < minDistance && 
         Number.isFinite(projection.distance) &&
-        Array.isArray(projection.point) &&
-        Number.isFinite(projection.point[0]) &&
-        Number.isFinite(projection.point[1])) {
+        Number.isFinite(projection.point.lat) &&
+        Number.isFinite(projection.point.lng)) {
       minDistance = projection.distance;
       snappedPoint = projection.point;
       snappedSegmentIndex = i;
-      bestSegmentStart = segmentStart;
-      bestSegmentEnd = segmentEnd;
+      bestSegmentStart = start;
+      bestSegmentEnd = end;
     }
   }
   
@@ -485,12 +487,12 @@ function snapToRouteCorridor(lat, lng, routeCoords) {
   });
   
   // Validate final snapped coordinates before returning
-  if (!snappedPoint || !Array.isArray(snappedPoint) || snappedPoint.length < 2) {
+  if (!snappedPoint || !snappedPoint.lat || !snappedPoint.lng) {
     console.log("[SNAP RESULT] No valid snapped point found");
     return null;
   }
-  const snappedLat = snappedPoint[0];
-  const snappedLng = snappedPoint[1];
+  const snappedLat = snappedPoint.lat;
+  const snappedLng = snappedPoint.lng;
   if (!Number.isFinite(snappedLat) || !Number.isFinite(snappedLng)) {
     console.log("[SNAP RESULT] Snapped coordinates non-finite:", snappedLat, snappedLng);
     return null;
@@ -506,8 +508,8 @@ function snapToRouteCorridor(lat, lng, routeCoords) {
   // Between 100-150m, still snap but with warning flag (for debugging)
   if (minDistance <= ROUTE_SNAP_THRESHOLD_METERS) {
     const result = {
-      snappedLat: snappedPoint[0],
-      snappedLng: snappedPoint[1],
+      snappedLat: snappedPoint.lat,
+      snappedLng: snappedPoint.lng,
       distanceFromRoute: minDistance,
       isSnapped: true,
       segmentIndex: snappedSegmentIndex
@@ -523,8 +525,8 @@ function snapToRouteCorridor(lat, lng, routeCoords) {
   // Soft snap: between 100-150m
   if (minDistance <= ROUTE_SNAP_MAX_DISTANCE_METERS) {
     const result = {
-      snappedLat: snappedPoint[0],
-      snappedLng: snappedPoint[1],
+      snappedLat: snappedPoint.lat,
+      snappedLng: snappedPoint.lng,
       distanceFromRoute: minDistance,
       isSnapped: true,
       isSoftSnap: true,
@@ -546,6 +548,11 @@ function snapToRouteCorridor(lat, lng, routeCoords) {
  * Calculate distance between two points using Haversine formula
  */
 function haversineDistance(lat1, lng1, lat2, lng2) {
+  // Validate all inputs
+  if (!Number.isFinite(lat1) || !Number.isFinite(lng1) || !Number.isFinite(lat2) || !Number.isFinite(lng2)) {
+    return Infinity;
+  }
+  
   const R = 6371000; // Earth radius in meters
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLng = (lng2 - lng1) * Math.PI / 180;
@@ -554,7 +561,10 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
     Math.sin(dLng/2) * Math.sin(dLng/2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c;
+  const result = R * c;
+  
+  // Guard against NaN
+  return Number.isFinite(result) ? result : Infinity;
 }
 
 /**
@@ -562,13 +572,21 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
  * Returns: { point: {lat, lng}, distance: meters, segmentIndex: number }
  */
 function projectPointOntoSegment(point, segmentStart, segmentEnd) {
-  // Extract coordinates using .lat/.lng properties
-  const px = point.lng;
-  const py = point.lat;
-  const x1 = segmentStart.lng;
-  const y1 = segmentStart.lat;
-  const x2 = segmentEnd.lng;
-  const y2 = segmentEnd.lat;
+  // Normalize inputs to {lat, lng}
+  const p = toLatLng(point);
+  const start = toLatLng(segmentStart);
+  const end = toLatLng(segmentEnd);
+  
+  if (!p || !start || !end) {
+    return { point: null, distance: Infinity, t: 0 };
+  }
+  
+  const px = p.lng;
+  const py = p.lat;
+  const x1 = start.lng;
+  const y1 = start.lat;
+  const x2 = end.lng;
+  const y2 = end.lat;
   
   // Convert to local meters approximation
   const latAvg = (y1 + y2) / 2;
@@ -596,12 +614,17 @@ function projectPointOntoSegment(point, segmentStart, segmentEnd) {
   const projLat = y1 + t * (y2 - y1);
   const projLng = x1 + t * (x2 - x1);
   
+  // Guard against NaN
+  if (!Number.isFinite(projLat) || !Number.isFinite(projLng)) {
+    return { point: null, distance: Infinity, t: 0 };
+  }
+  
   // Calculate distance from point to projection
   const distance = haversineDistance(py, px, projLat, projLng);
   
   return {
     point: { lat: projLat, lng: projLng },
-    distance,
+    distance: Number.isFinite(distance) ? distance : Infinity,
     t // Parameter along segment (0-1)
   };
 }
@@ -635,23 +658,14 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     return null;
   }
   
-  // Validate route coordinate structure
-  const invalidCoords = routeCoordinates.filter(
-    point =>
-      !Array.isArray(point) ||
-      point.length !== 2 ||
-      typeof point[0] !== "number" ||
-      typeof point[1] !== "number"
-  );
+  // Normalize ALL route coordinates to {lat, lng} format once
+  const normalizedCoords = routeCoordinates.map(toLatLng).filter(Boolean);
   
-  if (invalidCoords.length > 0) {
+  if (normalizedCoords.length < 2) {
     console.log("[PROJECTION EXIT]", "INVALID_ROUTE_COORDS", {
       busId,
-      invalidCount: invalidCoords.length,
-      invalidSample: invalidCoords.slice(0, 3),
-      validSample: routeCoordinates.filter(p => 
-        Array.isArray(p) && p.length === 2 && typeof p[0] === "number"
-      ).slice(0, 3)
+      originalCount: routeCoordinates.length,
+      normalizedCount: normalizedCoords.length
     });
     return null;
   }
@@ -659,9 +673,9 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
   // Coordinate order telemetry
   console.log("[COORD ORDER CHECK]", {
     busId,
-    firstPoint: routeCoordinates[0],
-    lastPoint: routeCoordinates[routeCoordinates.length - 1],
-    expectedFormat: "[lat, lng]"
+    firstPoint: normalizedCoords[0],
+    lastPoint: normalizedCoords[normalizedCoords.length - 1],
+    expectedFormat: "{lat, lng}"
   });
   
   let minDistance = Infinity;
@@ -671,10 +685,9 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
   let segmentStartDistance = 0;
   
   // Check each segment of the route
-  for (let i = 0; i < routeCoordinates.length - 1; i++) {
-    // Normalize segment coordinates to {lat, lng} format
-    const start = normalizeCoordinate(routeCoordinates[i]);
-    const end = normalizeCoordinate(routeCoordinates[i + 1]);
+  for (let i = 0; i < normalizedCoords.length - 1; i++) {
+    const start = normalizedCoords[i];
+    const end = normalizedCoords[i + 1];
     
     // Skip invalid segments
     if (!start || !end) {
@@ -713,24 +726,29 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
   }
   
   // Calculate precise cumulative distance to projected point
-  if (bestProjection) {
-    const segmentStart = normalizeCoordinate(routeCoordinates[bestSegmentIndex]);
-    if (!segmentStart) {
+  if (bestProjection && bestProjection.point) {
+    const segmentStart = normalizedCoords[bestSegmentIndex];
+    if (!segmentStart || !bestProjection.point) {
       console.log("[PROJECTION SEGMENT]", "BEST_SEGMENT_INVALID", { busId, bestSegmentIndex });
       return null;
     }
-    const projectedPoint = normalizeCoordinate(bestProjection.point) || bestProjection.point;
+    const projectedPoint = bestProjection.point;
     const projectedPointToStart = haversineDistance(
       segmentStart.lat, segmentStart.lng,
-      projectedPoint.lat || projectedPoint[0], projectedPoint.lng || projectedPoint[1]
+      projectedPoint.lat, projectedPoint.lng
     );
+    
+    // NaN guards before returning projection result
+    const safeCumulativeDistance = safeNumber(segmentStartDistance + projectedPointToStart) || 0;
+    const safeTotalRouteLength = safeNumber(cumulativeDistance) || 0;
+    const safeMinDistance = safeNumber(minDistance) || Infinity;
     
     const result = {
       projectedPoint: bestProjection.point,
-      cumulativeDistance: segmentStartDistance + projectedPointToStart,
+      cumulativeDistance: safeCumulativeDistance,
       segmentIndex: bestSegmentIndex,
-      distanceFromCorridor: minDistance,
-      totalRouteLength: cumulativeDistance
+      distanceFromCorridor: safeMinDistance,
+      totalRouteLength: safeTotalRouteLength
     };
     
     // PROJECTION RESULT TELEMETRY
@@ -739,10 +757,7 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
       projectedPoint: result.projectedPoint,
       distanceFromRoute: result.distanceFromCorridor,
       routeProgressIndex: result.segmentIndex,
-      isValidProjection:
-        !!result.projectedPoint &&
-        Array.isArray(result.projectedPoint) &&
-        result.projectedPoint.length === 2
+      isValidProjection: !!result.projectedPoint && result.distanceFromCorridor !== Infinity
     });
     
     return result;
@@ -853,7 +868,7 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
   // Calculate distance from bus to each stop using projected (snapped) position
   const stopDistances = normalizedStops.map((stop, index) => {
     const distance = haversineDistance(
-      projectedPoint[0], projectedPoint[1],
+      projectedPoint.lat, projectedPoint.lng,
       stop.lat, stop.lng
     );
     return { index, stopId: stop.id, distance };
@@ -997,7 +1012,7 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     // ROUTE HYDRATION: Normalize route coordinates ONCE with format support
     const rawRouteCoords = route?.routeCoords || route?.coordinates || [];
     const normalizedRouteCoords = (Array.isArray(rawRouteCoords) ? rawRouteCoords : [])
-      .map(normalizeCoordinate)
+      .map(toLatLng)
       .filter(Boolean);
     
     // Safe validation for route coordinates
@@ -1163,8 +1178,8 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   const progression = {
     busId,
     gpsConfidence,
-    gpsAccuracy: accuracy || null,
-    effectiveThreshold,
+    gpsAccuracy: safeNumber(accuracy) || null,
+    effectiveThreshold: safeNumber(effectiveThreshold) || STOP_ARRIVAL_THRESHOLD_METERS,
     tripId: state.tripId,
     routeId: state.routeId,
     currentStopIndex: stopProgress.currentStopIndex,
@@ -1173,15 +1188,15 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     nextStopIndex: stopProgress.nextStopIndex,
     nextStopId,
     nextStopName,
-    passedStopIds: stopProgress.passedStopIds,
-    remainingDistanceKm: Math.round(remainingDistanceKm * 100) / 100,
-    remainingDistanceMeters, // Distance to next stop
-    progressPercent,
-    etaMinutes,
-    avgSpeedKmh: Math.round(avgSpeedKmh * 10) / 10,
-    cumulativeDistance: Math.round(projection.cumulativeDistance),
-    totalRouteLength: Math.round(projection.totalRouteLength),
-    lastProjectedPoint: projection.projectedPoint,
+    passedStopIds: stopProgress.passedStopIds || [],
+    remainingDistanceKm: safeNumber(Math.round(remainingDistanceKm * 100) / 100) || 0,
+    remainingDistanceMeters: safeNumber(remainingDistanceMeters) || null,
+    progressPercent: safeNumber(progressPercent) || 0,
+    etaMinutes: safeNumber(etaMinutes) || null,
+    avgSpeedKmh: safeNumber(Math.round(avgSpeedKmh * 10) / 10) || 0,
+    cumulativeDistance: safeNumber(Math.round(projection.cumulativeDistance)) || 0,
+    totalRouteLength: safeNumber(Math.round(projection.totalRouteLength)) || 0,
+    lastProjectedPoint: projection.projectedPoint || null,
     lastUpdate: Date.now(),
     jitterFiltered,
     routeCoords: normalizedRoute.routeCoords // Store normalized coords for downstream use
@@ -1303,14 +1318,14 @@ function clearBusProgression(busId) {
     eventState.lastEventType = null;
     eventState.hasApproached = new Map();
   }
-  
+
   // Reset ETA state for new trip
   const eta = etaState.get(busId);
   if (eta) {
     eta.nextStopId = null;
     eta.hasApproached = new Map();
   }
-  
+
   console.log(`[State Cleanup] Cleared progression for bus ${busId}`);
 }
 
