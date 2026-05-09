@@ -935,6 +935,14 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     normalizedCoordCount: normalizedRoute.routeCoords.length
   });
   
+  // ROUTE VALID TELEMETRY
+  console.log("[PROGRESSION] ROUTE_VALID", {
+    hasCoords: !!normalizedRoute?.routeCoords,
+    coordCount: normalizedRoute?.routeCoords?.length || 0,
+    firstCoord: normalizedRoute?.routeCoords?.[0],
+    lastCoord: normalizedRoute?.routeCoords?.[normalizedRoute?.routeCoords?.length - 1]
+  });
+  
   // Get previous progression state
   const prevProgression = getBusProgression(busId);
   
@@ -973,6 +981,14 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     projectedPoint: projection?.projectedPoint || null,
     distanceFromRoute: projection?.distanceFromCorridor || null,
     segmentIndex: projection?.segmentIndex || null
+  });
+  
+  // PROJECTION RESULT TELEMETRY
+  console.log("[PROGRESSION] PROJECTION_RESULT", {
+    projectedPoint: projection?.projectedPoint,
+    distanceFromRoute: projection?.distanceFromCorridor,
+    segmentIndex: projection?.segmentIndex,
+    isWithinThreshold: projection?.distanceFromCorridor <= ROUTE_SNAP_THRESHOLD_METERS
   });
   
   if (!projection) {
@@ -1132,6 +1148,16 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     cumulativeDistance: Math.round(projection.cumulativeDistance) + "m",
     totalRouteLength: Math.round(projection.totalRouteLength) + "m",
     jitterFiltered
+  });
+  
+  // FINAL RESULT TELEMETRY
+  console.log("[PROGRESSION] FINAL_RESULT", {
+    isSnapped: true,
+    currentStopId: progression.currentStopId,
+    nextStopId: progression.nextStopId,
+    etaMinutes: progression.etaMinutes,
+    remainingDistanceMeters: progression.remainingDistanceMeters,
+    routeProgressIndex: progression.currentStopIndex
   });
   
   return progression;
