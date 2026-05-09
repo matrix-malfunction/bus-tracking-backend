@@ -31,7 +31,7 @@ const stopEventState = new Map();
 const etaState = new Map();
 
 /**
- * Normalize coordinate to [lat, lng] format
+ * Normalize coordinate to {lat, lng} format
  * Supports: [lat, lng], [lng, lat], {lat, lng}, {latitude, longitude}
  * Returns null if invalid
  */
@@ -44,11 +44,11 @@ function normalizeCoordinate(coord) {
     const [a, b] = coord;
     if (typeof a !== 'number' || typeof b !== 'number') return null;
     // Assume [lat, lng] - valid range check
-    if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return [a, b];
+    if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b };
     // Might be [lng, lat] - try swapping
-    if (Math.abs(a) <= 180 && Math.abs(b) <= 90) return [b, a];
+    if (Math.abs(a) <= 180 && Math.abs(b) <= 90) return { lat: b, lng: a };
     // Return as-is if both in reasonable range
-    return [a, b];
+    return { lat: a, lng: b };
   }
   
   // Object format: {lat, lng}, {latitude, longitude}, {x, y}
@@ -56,7 +56,7 @@ function normalizeCoordinate(coord) {
     const lat = coord.lat ?? coord.latitude ?? coord.y ?? null;
     const lng = coord.lng ?? coord.longitude ?? coord.x ?? coord.lon ?? null;
     if (typeof lat === 'number' && typeof lng === 'number') {
-      return [lat, lng];
+      return { lat, lng };
     }
   }
   
@@ -559,15 +559,19 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 
 /**
  * Find nearest point on a line segment
- * Returns: { point: [lat, lng], distance: meters, segmentIndex: number }
+ * Returns: { point: {lat, lng}, distance: meters, segmentIndex: number }
  */
 function projectPointOntoSegment(point, segmentStart, segmentEnd) {
-  const [px, py] = point;
-  const [x1, y1] = segmentStart;
-  const [x2, y2] = segmentEnd;
+  // Extract coordinates using .lat/.lng properties
+  const px = point.lng;
+  const py = point.lat;
+  const x1 = segmentStart.lng;
+  const y1 = segmentStart.lat;
+  const x2 = segmentEnd.lng;
+  const y2 = segmentEnd.lat;
   
   // Convert to local meters approximation
-  const latAvg = (x1 + x2) / 2;
+  const latAvg = (y1 + y2) / 2;
   const latScale = Math.cos(latAvg * Math.PI / 180) * 111320;
   const lngScale = 111320;
   
@@ -589,14 +593,14 @@ function projectPointOntoSegment(point, segmentStart, segmentEnd) {
   }
   
   // Calculate projected point
-  const projLat = x1 + t * (x2 - x1);
-  const projLng = y1 + t * (y2 - y1);
+  const projLat = y1 + t * (y2 - y1);
+  const projLng = x1 + t * (x2 - x1);
   
   // Calculate distance from point to projection
-  const distance = haversineDistance(px, py, projLat, projLng);
+  const distance = haversineDistance(py, px, projLat, projLng);
   
   return {
-    point: [projLat, projLng],
+    point: { lat: projLat, lng: projLng },
     distance,
     t // Parameter along segment (0-1)
   };
@@ -668,13 +672,29 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
   
   // Check each segment of the route
   for (let i = 0; i < routeCoordinates.length - 1; i++) {
-    const segmentStart = routeCoordinates[i];
-    const segmentEnd = routeCoordinates[i + 1];
+    // Normalize segment coordinates to {lat, lng} format
+    const start = normalizeCoordinate(routeCoordinates[i]);
+    const end = normalizeCoordinate(routeCoordinates[i + 1]);
+    
+    // Skip invalid segments
+    if (!start || !end) {
+      console.log("[PROJECTION SEGMENT]", "SKIP_INVALID", { busId, index: i });
+      continue;
+    }
+    
+    // Telemetry for first segment
+    if (i === 0) {
+      console.log("[PROJECTION SEGMENT]", "FIRST", {
+        busId,
+        start: { lat: start.lat, lng: start.lng },
+        end: { lat: end.lat, lng: end.lng }
+      });
+    }
     
     const projection = projectPointOntoSegment(
-      [busLat, busLng],
-      segmentStart,
-      segmentEnd
+      { lat: busLat, lng: busLng },
+      start,
+      end
     );
     
     if (projection.distance < minDistance) {
@@ -684,20 +704,25 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
       segmentStartDistance = cumulativeDistance;
     }
     
-    // Add segment length to cumulative
+    // Add segment length to cumulative using .lat/.lng
     const segmentLength = haversineDistance(
-      segmentStart[0], segmentStart[1],
-      segmentEnd[0], segmentEnd[1]
+      start.lat, start.lng,
+      end.lat, end.lng
     );
     cumulativeDistance += segmentLength;
   }
   
   // Calculate precise cumulative distance to projected point
   if (bestProjection) {
-    const segmentStart = routeCoordinates[bestSegmentIndex];
+    const segmentStart = normalizeCoordinate(routeCoordinates[bestSegmentIndex]);
+    if (!segmentStart) {
+      console.log("[PROJECTION SEGMENT]", "BEST_SEGMENT_INVALID", { busId, bestSegmentIndex });
+      return null;
+    }
+    const projectedPoint = normalizeCoordinate(bestProjection.point) || bestProjection.point;
     const projectedPointToStart = haversineDistance(
-      segmentStart[0], segmentStart[1],
-      bestProjection.point[0], bestProjection.point[1]
+      segmentStart.lat, segmentStart.lng,
+      projectedPoint.lat || projectedPoint[0], projectedPoint.lng || projectedPoint[1]
     );
     
     const result = {
@@ -842,8 +867,8 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
   // DIAGNOSTIC TELEMETRY: Nearest stop
   console.log("[NEAREST STOP]", {
     busId,
-    effectiveLat: projectedPoint[0],
-    effectiveLng: projectedPoint[1],
+    effectiveLat: projectedPoint.lat,
+    effectiveLng: projectedPoint.lng,
     nearestStopId: nearest?.stopId || null,
     nearestDistance: nearest?.distance ? Math.round(nearest.distance) : null,
     threshold: effectiveArrivalThreshold
@@ -1047,11 +1072,13 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   // GPS Jitter Check: Ignore tiny movements
   let jitterFiltered = false;
   if (prevProgression?.lastProjectedPoint) {
+    const prevPoint = prevProgression.lastProjectedPoint;
+    const currPoint = projection.projectedPoint;
     const moveDistance = haversineDistance(
-      prevProgression.lastProjectedPoint[0],
-      prevProgression.lastProjectedPoint[1],
-      projection.projectedPoint[0],
-      projection.projectedPoint[1]
+      prevPoint.lat || prevPoint[0],
+      prevPoint.lng || prevPoint[1],
+      currPoint.lat || currPoint[0],
+      currPoint.lng || currPoint[1]
     );
     
     if (moveDistance < GPS_JITTER_THRESHOLD_METERS) {
