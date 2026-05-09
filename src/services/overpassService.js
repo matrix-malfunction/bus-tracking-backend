@@ -215,11 +215,8 @@ const BUS_STOPS = [
   { id: "custom_tvl_ext_010", name: "Poonamallee Bus Stand", lat: 13.0517, lng: 80.0948 }
 ];
 
-// Production-safe: Ensure arrays exist before spreading
-const ALL_STOPS = [
-  ...(Array.isArray(BUS_STOPS) ? BUS_STOPS : []),
-  ...(Array.isArray(CUSTOM_STOPS) ? CUSTOM_STOPS : [])
-];
+// Combine all stops for lookup (BUS_STOPS contains all curated stops)
+const ALL_STOPS = [...BUS_STOPS];
 
 // Production-safe stop name lookup map with normalized string IDs
 const STOP_NAME_MAP = new Map(
@@ -456,7 +453,6 @@ module.exports = {
   clearCache,
   BOUNDING_BOX,
   BUS_STOPS,
-  CUSTOM_STOPS,
   ALL_STOPS,
   getStopNameById
 };
