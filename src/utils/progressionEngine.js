@@ -881,9 +881,24 @@ function calculateETA(remainingDistanceKm, busId) {
  * Called during each BUS_LOCATION_UPDATE
  */
 function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy) {
+  // ENTRY TELEMETRY
+  console.log("[COMPUTE ENTRY]", {
+    busId,
+    lat: busLat,
+    lng: busLng,
+    hasRoute: !!route,
+    routeId: route?.routeId || route?.id || null,
+    hasRouteCoords: !!route?.routeCoords,
+    coordCount: route?.routeCoords?.length || 0,
+    hasCoordinates: !!route?.coordinates,
+    coordCount2: route?.coordinates?.length || 0,
+    hasStops: !!route?.stops,
+    stopCount: route?.stops?.length || 0
+  });
+  
   // Validate inputs
   if (!Number.isFinite(busLat) || !Number.isFinite(busLng) || !route) {
-    console.log(`[Progression] Invalid inputs for bus ${busId}`);
+    console.log("[COMPUTE EXIT]", "NO_ROUTE", { busId });
     return null;
   }
   
@@ -898,7 +913,7 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     !Array.isArray(normalizedRouteCoords) ||
     normalizedRouteCoords.length < 2
   ) {
-    console.log("[ROUTE INVALID]", {
+    console.log("[COMPUTE EXIT]", "NO_ROUTE_COORDS", {
       busId,
       routeId: route?.id || route?.routeId || null,
       hasRouteCoords: !!route?.routeCoords,
@@ -915,13 +930,22 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     coordinates: normalizedRouteCoords // Ensure both properties exist
   };
   
+  console.log("[COMPUTE]", "ROUTE_NORMALIZED", {
+    busId,
+    normalizedCoordCount: normalizedRoute.routeCoords.length
+  });
+  
   // Get previous progression state
   const prevProgression = getBusProgression(busId);
   
   // GPS ACCURACY CHECK: Reject unusable GPS
   const gpsConfidence = getGpsConfidence(accuracy);
   if (gpsConfidence === "UNUSABLE") {
-    console.log(`[Progression GPS] Bus ${busId} accuracy ${accuracy}m exceeds ${MAX_USABLE_ACCURACY_METERS}m, returning previous state`);
+    console.log("[COMPUTE EXIT]", "GPS_UNUSABLE", {
+      busId,
+      accuracy,
+      threshold: MAX_USABLE_ACCURACY_METERS
+    });
     return {
       ...prevProgression,
       lastUpdate: Date.now(),
@@ -933,11 +957,26 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   // Convert speed to km/h for display
   const speedKmh = speedMps * 3.6;
   
+  // Telemetry before projection invocation
+  console.log("[COMPUTE]", "CALLING_PROJECTION", {
+    busId,
+    coordCount: normalizedRoute.routeCoords.length
+  });
+  
   // Project bus position onto route corridor (using normalized coordinates)
   const projection = projectOntoRouteCorridor(busLat, busLng, normalizedRoute.routeCoords, busId);
   
+  // Telemetry after projection returns
+  console.log("[COMPUTE]", "PROJECTION_RESPONSE", {
+    busId,
+    hasProjection: !!projection,
+    projectedPoint: projection?.projectedPoint || null,
+    distanceFromRoute: projection?.distanceFromCorridor || null,
+    segmentIndex: projection?.segmentIndex || null
+  });
+  
   if (!projection) {
-    console.log("[PROGRESSION EXIT]", "PROJECTION_FAILED", { busId });
+    console.log("[COMPUTE EXIT]", "PROJECTION_FAILED", { busId });
     return null;
   }
   
@@ -968,8 +1007,29 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     }
   }
   
-  const avgSpeedKmh = rollingSpeedKmh;
-    
+  // Telemetry before stop progression
+  console.log("[COMPUTE]", "CALLING_STOP_PROGRESSION", {
+    busId,
+    stopCount: normalizedRoute.stops?.length || 0
+  });
+  
+  // Determine stop progression with GPS accuracy awareness
+  const stopProgress = determineStopProgression(
+    projection,
+    normalizedRoute.stops,
+    prevProgression,
+    accuracy,
+    busId
+  );
+  
+  // Telemetry after stop progression
+  console.log("[COMPUTE]", "STOP_PROGRESSION_RESPONSE", {
+    busId,
+    currentStopIndex: stopProgress?.currentStopIndex,
+    nextStopIndex: stopProgress?.nextStopIndex,
+    passedCount: stopProgress?.passedStopIds?.length || 0
+  });
+  
   // Get stop names for display
   const currentStopId = stopProgress.currentStopIndex >= 0 ? normalizedRoute.stops[stopProgress.currentStopIndex] : null;
   const nextStopId = stopProgress.nextStopIndex >= 0 ? normalizedRoute.stops[stopProgress.nextStopIndex] : null;
