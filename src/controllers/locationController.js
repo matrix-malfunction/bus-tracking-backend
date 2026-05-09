@@ -267,19 +267,44 @@ async function updateLocation(req, res) {
       }
     }
 
+    // === ROUTE SNAPPING (Corridor Locking) ===
+    // Calculate snapped coordinates for professional AVL-style rendering
+    let snappedCoords = null;
+    const routeInfo = getBusRoute(busId);
+    const routeData = routeInfo ? routes.find(r => r.id === routeInfo.routeId) : null;
+    const routeCoords = routeData?.coordinates || null;
+    
+    if (routeCoords && routeCoords.length >= 2) {
+      // Import snapToRouteCorridor from progressionEngine
+      const { snapToRouteCorridor } = require("../utils/progressionEngine");
+      snappedCoords = snapToRouteCorridor(numLat, numLng, routeCoords);
+      
+      if (snappedCoords) {
+        console.log("[BACKEND] Route snapping:", {
+          busId,
+          raw: [numLat, numLng],
+          snapped: [snappedCoords.snappedLat, snappedCoords.snappedLng],
+          distanceFromRoute: Math.round(snappedCoords.distanceFromRoute),
+          isSoftSnap: snappedCoords.isSoftSnap || false
+        });
+      }
+    }
+
     // === SOCKET EMIT ===
     if (io && busId && Number.isFinite(numLat) && Number.isFinite(numLng)) {
-      // Check if bus has route assignment
-      const routeInfo = getBusRoute(busId);
-      
-      // Get route coordinates from routes data if route assigned
-      const routeData = routeInfo ? routes.find(r => r.id === routeInfo.routeId) : null;
-      const routeCoords = routeData?.coordinates || null;
-      
       const emitPayload = {
         busId: busId.trim(),
+        // Raw GPS coordinates (always included)
         latitude: numLat,
         longitude: numLng,
+        // Snapped coordinates (if within route corridor)
+        ...(snappedCoords && {
+          snappedLat: snappedCoords.snappedLat,
+          snappedLng: snappedCoords.snappedLng,
+          isSnapped: true,
+          distanceFromRoute: snappedCoords.distanceFromRoute,
+          isSoftSnap: snappedCoords.isSoftSnap || false
+        }),
         speed: speed, // Driver-computed speed (for display)
         derivedSpeed: derivedSpeed, // Backend-derived speed (for visual state detection)
         heading: Math.round(heading),

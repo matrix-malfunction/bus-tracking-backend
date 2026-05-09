@@ -19,6 +19,10 @@ const STOP_ARRIVAL_THRESHOLD_METERS = 40; // Bus must be within 40m to be "at" s
 const STOP_ADVANCE_HYSTERESIS_METERS = 60; // Must advance 60m past stop to move to next
 const MAX_USABLE_ACCURACY_METERS = 80; // Maximum GPS accuracy we can use for progression
 
+// ROUTE SNAPPING thresholds
+const ROUTE_SNAP_THRESHOLD_METERS = 100; // Maximum distance from route to snap (otherwise use raw GPS)
+const ROUTE_SNAP_MAX_DISTANCE_METERS = 150; // Hard cutoff - beyond this, no snapping at all
+
 /**
  * Calculate GPS confidence level based on accuracy
  * @param {number} accuracy - GPS accuracy in meters
@@ -44,6 +48,73 @@ const STOP_COORDS_MAP = new Map(
 function getStopCoordsById(stopId) {
   if (!stopId) return null;
   return STOP_COORDS_MAP.get(String(stopId)) || null;
+}
+
+/**
+ * Snap GPS coordinates to nearest route corridor segment
+ * Returns snapped position only if within threshold, otherwise returns null
+ * @param {number} lat - Raw GPS latitude
+ * @param {number} lng - Raw GPS longitude
+ * @param {Array} routeCoords - Route coordinates [[lat, lng], ...]
+ * @returns {{snappedLat: number, snappedLng: number, distanceFromRoute: number} | null}
+ */
+function snapToRouteCorridor(lat, lng, routeCoords) {
+  if (!routeCoords || routeCoords.length < 2 || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+  
+  let minDistance = Infinity;
+  let snappedPoint = null;
+  let snappedSegmentIndex = -1;
+  
+  // Find nearest segment
+  for (let i = 0; i < routeCoords.length - 1; i++) {
+    const segmentStart = routeCoords[i];
+    const segmentEnd = routeCoords[i + 1];
+    
+    const projection = projectPointOntoSegment(
+      [lat, lng],
+      segmentStart,
+      segmentEnd
+    );
+    
+    if (projection && projection.distance < minDistance) {
+      minDistance = projection.distance;
+      snappedPoint = projection.point;
+      snappedSegmentIndex = i;
+    }
+  }
+  
+  // Hard cutoff: beyond 150m, no snapping at all
+  if (minDistance > ROUTE_SNAP_MAX_DISTANCE_METERS) {
+    return null;
+  }
+  
+  // Soft threshold: within 100m, return snapped coordinates
+  // Between 100-150m, still snap but with warning flag (for debugging)
+  if (minDistance <= ROUTE_SNAP_THRESHOLD_METERS) {
+    return {
+      snappedLat: snappedPoint[0],
+      snappedLng: snappedPoint[1],
+      distanceFromRoute: minDistance,
+      isSnapped: true,
+      segmentIndex: snappedSegmentIndex
+    };
+  }
+  
+  // Between 100-150m: soft snap with warning
+  if (minDistance <= ROUTE_SNAP_MAX_DISTANCE_METERS) {
+    return {
+      snappedLat: snappedPoint[0],
+      snappedLng: snappedPoint[1],
+      distanceFromRoute: minDistance,
+      isSnapped: true,
+      isSoftSnap: true, // Flag for potential off-route warning
+      segmentIndex: snappedSegmentIndex
+    };
+  }
+  
+  return null;
 }
 
 /**
@@ -450,6 +521,7 @@ module.exports = {
   computeBusProgression,
   hasProgressionChanged,
   projectOntoRouteCorridor,
+  snapToRouteCorridor, // Route corridor locking for visual positioning
   haversineDistance,
   GPS_JITTER_THRESHOLD_METERS // Export for unified use
 };
