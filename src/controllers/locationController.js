@@ -24,6 +24,30 @@ const MIN_TIME_DIFF_SEC = 3;
 // Use unified GPS jitter threshold from progression engine
 const JITTER_THRESHOLD_METERS = GPS_JITTER_THRESHOLD_METERS;
 
+/**
+ * Normalize route data to ensure consistent field names
+ * Handles migration between route.coordinates and route.routeCoords
+ */
+function normalizeRoute(route) {
+  if (!route) return null;
+
+  return {
+    ...route,
+
+    // CRITICAL FIX:
+    // support both legacy and current route field names
+    routeCoords:
+      route.routeCoords ||
+      route.coordinates ||
+      [],
+
+    stops:
+      Array.isArray(route.stops)
+        ? route.stops
+        : [],
+  };
+}
+
 // STOP EVENT ENGINE: Register callback to emit socket events
 // This creates backend-authoritative ARRIVAL/DEPARTURE/DWELLING/APPROACHING events
 onStopEvent((eventType, payload) => {
@@ -370,17 +394,8 @@ async function _updateLocationUnsafe(req, res) {
     let progression = null;
     try {
       const activeRouteInfo = getBusRoute(busId);
-      // CRITICAL FIX: routes.js uses 'coordinates', but we need 'routeCoords' for progression engine
-      // Normalize both sources to use consistent 'routeCoords' field
-      const routeForProgression = activeRouteInfo ? {
-        routeId: activeRouteInfo.routeId,
-        routeCoords: activeRouteInfo.routeCoords || activeRouteInfo.coordinates, // Support both field names
-        stops: activeRouteInfo.stops || []
-      } : (routeInfo ? {
-        routeId: routeInfo.routeId,
-        routeCoords: routeInfo.routeCoords || routeInfo.coordinates, // Support both field names
-        stops: routeInfo.stops || []
-      } : null);
+      // Use normalizeRoute to handle field name migration (coordinates -> routeCoords)
+      const routeForProgression = normalizeRoute(activeRouteInfo) || normalizeRoute(routeInfo);
 
       // TELEMETRY: Route data before computeBusProgression
       console.log("[ROUTE TELEMETRY]", {
