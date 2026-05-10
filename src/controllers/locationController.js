@@ -535,6 +535,8 @@ async function _updateLocationUnsafe(req, res) {
         // Sanitize all numeric fields for safe serialization
         const emitPayload = {
           busId: busId.trim(),
+          // Timestamp for stale packet protection
+          timestamp: Date.now(),
           // Raw GPS coordinates (always included)
           latitude: sanitizeNumber(numLat),
           longitude: sanitizeNumber(numLng),
