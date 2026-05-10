@@ -274,22 +274,13 @@ async function _updateLocationUnsafe(req, res) {
     // If driver sends trackingActive: false, mark bus offline immediately
     if (req.body.trackingActive === false) {
       console.log("[BACKEND] STOP signal received for:", busId);
-      
-      // Update tracking state to inactive
-      trackingState.set(busId, {
-        ...state,
-        trackingActive: false,
-        lastUpdate: Date.now()
-      });
-      
-      // Emit BUS_OFFLINE to all clients
-      if (io && busId) {
-        io.emit("BUS_OFFLINE", { busId });
-        console.log("[BACKEND] 📡 Emitted BUS_OFFLINE for:", busId);
-      }
-      
-      return res.json({ 
-        success: true, 
+
+      // Use setTrackingActive to properly emit BUS_OFFLINE and delete from trackingState
+      setTrackingActive(busId, false, io);
+
+      return res.json({
+        success: true,
+        offline: true,
         message: "Tracking stopped",
         busId,
         trackingActive: false

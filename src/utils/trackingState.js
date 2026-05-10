@@ -41,14 +41,16 @@ const setTrackingActive = (busId, active, io = null) => {
 
   console.log(`[TRACKING STATE] Bus ${busId}: ${nextActive ? "ACTIVE" : "INACTIVE"}`);
 
-  // On BUS_OFFLINE transition (active → inactive), delete from trackingState after emitting
-  if (wasActive && !nextActive && io) {
-    io.emit("BUS_OFFLINE", {
-      busId,
-      reason: "tracking_stopped",
-      timestamp: new Date().toISOString()
-    });
-    console.log(`[BUS_OFFLINE] Emitted for bus: ${busId} (tracking_stopped)`);
+  // On BUS_OFFLINE transition (active → inactive), delete from trackingState
+  if (wasActive && !nextActive) {
+    if (io) {
+      io.emit("BUS_OFFLINE", {
+        busId,
+        reason: "tracking_stopped",
+        timestamp: new Date().toISOString()
+      });
+      console.log(`[BUS_OFFLINE] Emitted for bus: ${busId} (tracking_stopped)`);
+    }
     trackingState.delete(busId);
     console.log(`[TRACKING STATE] Bus ${busId}: deleted from trackingState`);
   }
