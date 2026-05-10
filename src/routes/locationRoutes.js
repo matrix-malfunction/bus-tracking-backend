@@ -7,7 +7,8 @@ const {
   getNearestStopHandler,
   getNearestSingleBus,
   startTracking,
-  stopTracking
+  stopTracking,
+  debugProgression
 } = require("../controllers/locationController");
 
 // Route-level logging middleware to diagnose 403 issues
@@ -26,5 +27,6 @@ router.post("/stop", stopTracking);
 router.get("/all", getAllBusLocations);
 router.get("/nearest-stop", getNearestStopHandler);
 router.get("/nearest-single", getNearestSingleBus);
+router.get("/debug/progression/:busId", debugProgression);
 
 module.exports = router;

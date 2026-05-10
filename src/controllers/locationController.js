@@ -3,9 +3,10 @@ const Route = require("../models/Route");
 const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
-const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute, computeDerivedSpeed } = require("../utils/trackingState");
+const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute, computeDerivedSpeed, getBusProgression } = require("../utils/trackingState");
 const routes = require("../../data/routes"); // Route master data
-const { computeBusProgression, hasProgressionChanged, GPS_JITTER_THRESHOLD_METERS, onStopEvent } = require("../utils/progressionEngine");
+const { computeBusProgression, hasProgressionChanged, GPS_JITTER_THRESHOLD_METERS, onStopEvent, toLatLng, projectOntoRouteCorridor } = require("../utils/progressionEngine");
+const { ALL_STOPS } = require("../services/overpassService");
 // Speed comes directly from driver app - no backend recalculation needed
 
 const { chooseBestSource } = require("../services/hybridSourceSelector");
@@ -369,13 +370,15 @@ async function _updateLocationUnsafe(req, res) {
     let progression = null;
     try {
       const activeRouteInfo = getBusRoute(busId);
+      // CRITICAL FIX: routes.js uses 'coordinates', but we need 'routeCoords' for progression engine
+      // Normalize both sources to use consistent 'routeCoords' field
       const routeForProgression = activeRouteInfo ? {
         routeId: activeRouteInfo.routeId,
-        routeCoords: activeRouteInfo.routeCoords,
+        routeCoords: activeRouteInfo.routeCoords || activeRouteInfo.coordinates, // Support both field names
         stops: activeRouteInfo.stops || []
       } : (routeInfo ? {
         routeId: routeInfo.routeId,
-        routeCoords: routeInfo.routeCoords,
+        routeCoords: routeInfo.routeCoords || routeInfo.coordinates, // Support both field names
         stops: routeInfo.stops || []
       } : null);
 
@@ -383,8 +386,9 @@ async function _updateLocationUnsafe(req, res) {
       console.log("[ROUTE TELEMETRY]", {
         busId,
         hasActiveRouteInfo: !!activeRouteInfo,
+        hasRouteInfo: !!routeInfo,
         routeId: routeForProgression?.routeId || null,
-        hasRouteCoords: !!routeForProgression?.routeCoords,
+        hasRouteCoords: !!(routeForProgression?.routeCoords && routeForProgression?.routeCoords.length > 0),
         routeCoordsLength: routeForProgression?.routeCoords?.length || 0,
         firstCoord: routeForProgression?.routeCoords?.[0] || null,
         lastCoord: routeForProgression?.routeCoords?.[routeForProgression?.routeCoords?.length - 1] || null,
@@ -397,7 +401,7 @@ async function _updateLocationUnsafe(req, res) {
       // FLOW TELEMETRY STEP 5: Before computeBusProgression
       console.log("[FLOW] STEP 5 - Before computeBusProgression");
 
-      if (routeForProgression && routeForProgression.routeCoords) {
+      if (routeForProgression && routeForProgression.routeCoords && routeForProgression.routeCoords.length >= 2) {
         progression = computeBusProgression(
           busId,
           numLat,
@@ -1152,11 +1156,133 @@ const stopTracking = async (req, res) => {
   }
 };
 
+// Debug endpoint for progression diagnostics
+const debugProgression = async (req, res) => {
+  try {
+    const { busId } = req.params;
+    console.log("[DEBUG] ========== PROGRESSION DEBUG ==========");
+    console.log("[DEBUG] busId:", busId);
+
+    // Get tracking state
+    const state = trackingState.get(busId);
+    if (!state) {
+      return res.status(404).json({
+        error: "Bus not found or not tracking",
+        busId,
+        trackingState: null
+      });
+    }
+
+    // Get route info
+    const routeId = state.routeId;
+    const route = routes.find(r => r.id === routeId);
+
+    // Get raw route coordinates
+    const rawRouteCoords = route?.routeCoords || route?.coordinates || [];
+
+    // Normalize coordinates
+    const normalizedCoords = rawRouteCoords.map(toLatLng).filter(Boolean);
+
+    // Get stops
+    const rawStops = route?.stops || [];
+    const normalizedStops = rawStops.map(stopId => {
+      const stop = ALL_STOPS.find(s => s.id === stopId);
+      return stop ? { id: stopId, ...stop } : null;
+    }).filter(Boolean);
+
+    // Get current progression
+    const progression = getBusProgression(busId);
+
+    // Get last known location
+    const lastLocation = state.location || state.lastLocation || null;
+
+    // Try projection if we have location and coords
+    let projectionResult = null;
+    let snappedPoint = null;
+    if (lastLocation && normalizedCoords.length >= 2) {
+      try {
+        projectionResult = projectOntoRouteCorridor(
+          lastLocation.lat,
+          lastLocation.lng,
+          normalizedCoords,
+          busId
+        );
+        snappedPoint = projectionResult?.projectedPoint || null;
+      } catch (projErr) {
+        projectionResult = { error: projErr.message };
+      }
+    }
+
+    // Build debug response
+    const debugInfo = {
+      busId,
+      timestamp: new Date().toISOString(),
+      trackingState: {
+        trackingActive: state.trackingActive,
+        routeId: state.routeId,
+        routeName: state.routeName,
+        tripId: state.tripId,
+        lastUpdate: state.lastUpdate,
+        hasLocation: !!lastLocation,
+        lastLocation: lastLocation ? {
+          lat: lastLocation.lat,
+          lng: lastLocation.lng,
+          timestamp: lastLocation.timestamp
+        } : null
+      },
+      route: {
+        routeId,
+        routeName: route?.name || null,
+        rawCoordsLength: rawRouteCoords.length,
+        normalizedCoordsLength: normalizedCoords.length,
+        coordsSample: normalizedCoords.slice(0, 3).map(c => ({ lat: c.lat, lng: c.lng })),
+        firstCoord: normalizedCoords[0] || null,
+        lastCoord: normalizedCoords[normalizedCoords.length - 1] || null,
+        stopsCount: rawStops.length,
+        normalizedStopsCount: normalizedStops.length,
+        stopsSample: normalizedStops.slice(0, 3).map(s => ({ id: s.id, name: s.name, lat: s.lat, lng: s.lng }))
+      },
+      projection: projectionResult ? {
+        hasProjection: !!projectionResult.projectedPoint,
+        projectedPoint: projectionResult.projectedPoint || null,
+        distanceFromCorridor: projectionResult.distanceFromCorridor || null,
+        segmentIndex: projectionResult.segmentIndex || null,
+        cumulativeDistance: projectionResult.cumulativeDistance || null,
+        totalRouteLength: projectionResult.totalRouteLength || null,
+        error: projectionResult.error || null
+      } : null,
+      snappedCoordinates: snappedPoint ? {
+        lat: snappedPoint.lat,
+        lng: snappedPoint.lng
+      } : null,
+      progression: progression || null,
+      coordinateOrder: {
+        note: "All coordinates normalized to {lat, lng} format",
+        backendRouteCoordsFormat: rawRouteCoords.length > 0 ?
+          (Array.isArray(rawRouteCoords[0]) ?
+            (Math.abs(rawRouteCoords[0][0]) <= 90 ? "[lat, lng]" : "[lng, lat]") :
+            "object format") : "N/A"
+      }
+    };
+
+    console.log("[DEBUG] Response:", JSON.stringify(debugInfo, null, 2));
+    return res.json(debugInfo);
+  } catch (err) {
+    console.error("[DEBUG] ERROR:", err.message);
+    return res.status(500).json({
+      error: "Debug endpoint failed",
+      message: err.message,
+      stack: err.stack
+    });
+  }
+};
+
 module.exports = {
   updateLocation,
   getAllBusLocations,
   getNearestStopHandler,
   getNearestSingleBus,
   startTracking,
-  stopTracking
+  stopTracking,
+  debugProgression
 };
