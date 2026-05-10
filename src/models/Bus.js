@@ -77,8 +77,8 @@ const busSchema = new mongoose.Schema({
   // Timestamps
   lastUpdate: {
     type: Date,
-    default: Date.now,
-    index: true
+    default: Date.now
+    // Note: index defined at schema level below (TTL index at line 105)
   },
   createdAt: {
     type: Date,
