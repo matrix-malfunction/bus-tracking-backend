@@ -417,6 +417,15 @@ async function _updateLocationUnsafe(req, res) {
       console.log("[FLOW] STEP 5 - Before computeBusProgression");
 
       if (routeForProgression && routeForProgression.routeCoords && routeForProgression.routeCoords.length >= 2) {
+        // TELEMETRY: Route data for progression
+        console.log("[ROUTE TELEMETRY]", {
+          busId,
+          hasRoute: !!routeForProgression,
+          routeCoordsLength: routeForProgression?.routeCoords?.length || 0,
+          stopsCount: routeForProgression?.stops?.length || 0,
+          firstCoord: routeForProgression?.routeCoords?.[0],
+        });
+
         progression = computeBusProgression(
           busId,
           numLat,
@@ -425,16 +434,26 @@ async function _updateLocationUnsafe(req, res) {
           routeForProgression,
           accuracy
         );
+
+        // VERIFY PROJECTION BEFORE PROGRESSION
+        console.log("[SNAP RESULT]", {
+          isSnapped: !!(progression?.lastProjectedPoint),
+          snappedLat: progression?.lastProjectedPoint?.lat || null,
+          snappedLng: progression?.lastProjectedPoint?.lng || null,
+          distance: progression?.distanceFromCorridor || null,
+        });
       }
 
       if (progression) {
         console.log("[LOCATION]", "COMPUTE_RESPONSE", {
           busId,
           hasProgression: true,
-          isSnapped: progression?.isSnapped || false,
+          isSnapped: !!(progression?.lastProjectedPoint),
           snappedLat: progression?.lastProjectedPoint?.lat || null,
           currentStopId: progression?.currentStopId || null,
-          nextStopId: progression?.nextStopId || null
+          nextStopId: progression?.nextStopId || null,
+          nextStopName: progression?.nextStopName || null,
+          nextStopEtaMinutes: progression?.nextStopEtaMinutes || null,
         });
       }
     } catch (progressionError) {

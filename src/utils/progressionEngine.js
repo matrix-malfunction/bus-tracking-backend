@@ -23,6 +23,79 @@ const MAX_USABLE_ACCURACY_METERS = 80; // Maximum GPS accuracy we can use for pr
 const ROUTE_SNAP_THRESHOLD_METERS = 100; // Maximum distance from route to snap (otherwise use raw GPS)
 const ROUTE_SNAP_MAX_DISTANCE_METERS = 150; // Hard cutoff - beyond this, no snapping at all
 
+/**
+ * HARD COORDINATE NORMALIZER
+ * Auto-detects coordinate order and validates ranges
+ * Handles GeoJSON [lng, lat] and [lat, lng] formats
+ */
+function normalizeCoord(coord, index = 0) {
+  if (!coord) return null;
+
+  // Object format {lat,lng}
+  if (
+    typeof coord === "object" &&
+    !Array.isArray(coord) &&
+    coord.lat !== undefined &&
+    coord.lng !== undefined
+  ) {
+    const lat = Number(coord.lat);
+    const lng = Number(coord.lng);
+
+    if (
+      Number.isFinite(lat) &&
+      Number.isFinite(lng) &&
+      Math.abs(lat) <= 90 &&
+      Math.abs(lng) <= 180
+    ) {
+      return { lat, lng };
+    }
+
+    console.log("[COORD INVALID] Object format out of range", { index, lat, lng });
+    return null;
+  }
+
+  // Array format - auto-detect order
+  if (Array.isArray(coord) && coord.length >= 2) {
+    const a = Number(coord[0]);
+    const b = Number(coord[1]);
+
+    if (!Number.isFinite(a) || !Number.isFinite(b)) {
+      console.log("[COORD INVALID] Non-numeric values", { index, a, b });
+      return null;
+    }
+
+    // Auto-detect: [lng, lat] (GeoJSON) vs [lat, lng] (common)
+    // lat range: -90 to 90
+    // lng range: -180 to 180
+    const aIsLat = Math.abs(a) <= 90;
+    const bIsLat = Math.abs(b) <= 90;
+    const aIsLng = Math.abs(a) <= 180;
+    const bIsLng = Math.abs(b) <= 180;
+
+    if (aIsLat && bIsLng) {
+      // [lat, lng] format
+      return { lat: a, lng: b };
+    }
+
+    if (bIsLat && aIsLng) {
+      // [lng, lat] format (GeoJSON standard)
+      return { lat: b, lng: a };
+    }
+
+    // Both in valid range - ambiguous, prefer [lat, lng] for consistency
+    if (aIsLat && aIsLng && bIsLat && bIsLng) {
+      console.log("[COORD AMBIGUOUS] Both values in valid range", { index, a, b, assumed: "[lat, lng]" });
+      return { lat: a, lng: b };
+    }
+
+    console.log("[COORD INVALID] Values out of valid range", { index, a, b, aIsLat, bIsLng });
+    return null;
+  }
+
+  console.log("[COORD INVALID] Unrecognized format", { index, type: typeof coord, isArray: Array.isArray(coord) });
+  return null;
+}
+
 // STOP EVENT ENGINE
 // Per-bus stop event state for lifecycle tracking (APPROACHING -> ARRIVED -> DWELLING -> DEPARTED)
 const stopEventState = new Map();
@@ -643,91 +716,101 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     coordCount: routeCoordinates?.length || 0,
     sample: routeCoordinates?.slice(0, 2)
   });
-  
-  // Validate route coordinates exist
-  if (!routeCoordinates || !Array.isArray(routeCoordinates)) {
-    console.log("[PROJECTION EXIT]", "EMPTY_ROUTE", { busId });
-    return null;
-  }
-  
-  if (routeCoordinates.length < 2) {
-    console.log("[PROJECTION EXIT]", "INSUFFICIENT_ROUTE_COORDS", { 
-      busId, 
-      length: routeCoordinates.length 
+
+  // VALIDATE BUS LOCATION
+  if (
+    !Number.isFinite(busLat) ||
+    !Number.isFinite(busLng)
+  ) {
+    console.error("[PROJECTION] INVALID BUS LOCATION", {
+      busLat,
+      busLng,
     });
     return null;
   }
-  
-  // Normalize ALL route coordinates to {lat, lng} format once
-  const normalizedCoords = routeCoordinates.map(toLatLng).filter(Boolean);
-  
-  if (normalizedCoords.length < 2) {
-    console.log("[PROJECTION EXIT]", "INVALID_ROUTE_COORDS", {
-      busId,
-      originalCount: routeCoordinates.length,
-      normalizedCount: normalizedCoords.length
-    });
-    return null;
-  }
-  
-  // Coordinate order telemetry
-  console.log("[COORD ORDER CHECK]", {
-    busId,
-    firstPoint: normalizedCoords[0],
-    lastPoint: normalizedCoords[normalizedCoords.length - 1],
-    expectedFormat: "{lat, lng}"
+
+  // HARD NORMALIZE route coordinates
+  const normalizedRoute =
+    routeCoordinates
+      .map((c, i) => normalizeCoord(c, i))
+      .filter(Boolean);
+
+  // ROUTE VALIDATION with telemetry
+  const originalCount = routeCoordinates?.length || 0;
+  const normalizedCount = normalizedRoute.length;
+  console.log("[ROUTE VALIDATION]", {
+    originalCount,
+    normalizedCount,
+    sample: normalizedRoute.slice(0, 3),
+    sampleCoords: routeCoordinates?.slice(0, 3),
   });
-  
+
+  if (
+    !Array.isArray(normalizedRoute) ||
+    normalizedRoute.length < 2
+  ) {
+    console.error("[PROJECTION] INVALID ROUTE", {
+      routeLength: normalizedCount,
+    });
+    return null;
+  }
+
+  // PROJECTION INPUT TELEMETRY
+  console.log("[PROJECTION INPUT]", {
+    busLat,
+    busLng,
+    routePoints: normalizedRoute.length,
+    firstPoint: normalizedRoute[0],
+    lastPoint:
+      normalizedRoute[normalizedRoute.length - 1],
+  });
+
   let minDistance = Infinity;
   let bestProjection = null;
   let cumulativeDistance = 0;
   let bestSegmentIndex = 0;
   let segmentStartDistance = 0;
-  
-  // Check each segment of the route
-  for (let i = 0; i < normalizedCoords.length - 1; i++) {
-    const start = normalizedCoords[i];
-    const end = normalizedCoords[i + 1];
-    
-    // Skip invalid segments
+
+  // HARDENED SEGMENT LOOP
+  for (let i = 0; i < normalizedRoute.length - 1; i++) {
+    const start = normalizedRoute[i];
+    const end = normalizedRoute[i + 1];
+
     if (!start || !end) {
-      console.log("[PROJECTION SEGMENT]", "SKIP_INVALID", { busId, index: i });
       continue;
     }
-    
-    // Telemetry for first segment
-    if (i === 0) {
-      console.log("[PROJECTION SEGMENT]", "FIRST", {
-        busId,
-        start: { lat: start.lat, lng: start.lng },
-        end: { lat: end.lat, lng: end.lng }
-      });
-    }
-    
+
     const projection = projectPointOntoSegment(
       { lat: busLat, lng: busLng },
       start,
       end
     );
-    
+
     if (projection.distance < minDistance) {
       minDistance = projection.distance;
       bestProjection = projection;
       bestSegmentIndex = i;
       segmentStartDistance = cumulativeDistance;
     }
-    
-    // Add segment length to cumulative using .lat/.lng
+
+    // Add segment length to cumulative
     const segmentLength = haversineDistance(
       start.lat, start.lng,
       end.lat, end.lng
     );
     cumulativeDistance += segmentLength;
   }
-  
+
+  // PROJECTION RESULT TELEMETRY
+  console.log("[PROJECTION RESULT]", {
+    found: !!bestProjection?.point,
+    minDistance,
+    segmentIndex: bestSegmentIndex,
+  });
+
   // Calculate precise cumulative distance to projected point
   if (bestProjection && bestProjection.point) {
-    const segmentStart = normalizedCoords[bestSegmentIndex];
+    const segmentStart = normalizedRoute[bestSegmentIndex];
     if (!segmentStart || !bestProjection.point) {
       console.log("[PROJECTION SEGMENT]", "BEST_SEGMENT_INVALID", { busId, bestSegmentIndex });
       return null;
@@ -737,39 +820,60 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
       segmentStart.lat, segmentStart.lng,
       projectedPoint.lat, projectedPoint.lng
     );
-    
+
     // NaN guards before returning projection result
-    const safeCumulativeDistance = safeNumber(segmentStartDistance + projectedPointToStart) || 0;
-    const safeTotalRouteLength = safeNumber(cumulativeDistance) || 0;
-    const safeMinDistance = safeNumber(minDistance) || Infinity;
-    
+    const safeCumulativeDistance = safeNumber(segmentStartDistance + projectedPointToStart) ?? 0;
+    const safeTotalRouteLength = safeNumber(cumulativeDistance) ?? 0;
+    const safeMinDistance = safeNumber(minDistance) ?? Infinity;
+
+    // PROJECTION DISTANCE CHECK (diagnostic telemetry)
+    const SNAP_THRESHOLD_METERS = 150;
+    console.log("[PROJECTION DISTANCE CHECK]", {
+      minDistance: safeMinDistance,
+      threshold: SNAP_THRESHOLD_METERS,
+      exceeded: safeMinDistance > SNAP_THRESHOLD_METERS,
+    });
+
+    // TEMPORARILY DISABLED: Hard threshold rejection
+    // During diagnostics, warn but don't return null
+    if (safeMinDistance > SNAP_THRESHOLD_METERS) {
+      console.warn("[PROJECTION] Snap threshold exceeded - continuing for diagnostics", {
+        busId,
+        distance: safeMinDistance,
+        threshold: SNAP_THRESHOLD_METERS,
+      });
+      // DO NOT return null during diagnostics
+    }
+
     const result = {
       projectedPoint: bestProjection.point,
+      snappedLat: projectedPoint.lat,
+      snappedLng: projectedPoint.lng,
       cumulativeDistance: safeCumulativeDistance,
-      segmentIndex: bestSegmentIndex,
-      distanceFromCorridor: safeMinDistance,
+      segmentIndex: bestSegmentIndex ?? 0,  // Fix: index 0 should not become null
+      distanceFromCorridor: safeMinDistance ?? null,  // Fix: use nullish coalescing
       totalRouteLength: safeTotalRouteLength
     };
-    
-    // PROJECTION RESULT TELEMETRY
-    console.log("[PROJECTION RESULT]", {
+
+    // FULL PROJECTION TELEMETRY
+    console.log("[PROJECTION SUCCESS]", {
       busId,
-      projectedPoint: result.projectedPoint,
-      distanceFromRoute: result.distanceFromCorridor,
-      routeProgressIndex: result.segmentIndex,
-      isValidProjection: !!result.projectedPoint && result.distanceFromCorridor !== Infinity
+      snappedLat: result.snappedLat,
+      snappedLng: result.snappedLng,
+      distanceFromCorridor: result.distanceFromCorridor,
+      segmentIndex: result.segmentIndex,
     });
-    
+
     return result;
   }
-  
+
   // No valid projection found
   console.log("[PROJECTION EXIT]", "NO_CLOSEST_SEGMENT", {
     busId,
     minDistance,
     coordCount: routeCoordinates.length
   });
-  
+
   return null;
 }
 
