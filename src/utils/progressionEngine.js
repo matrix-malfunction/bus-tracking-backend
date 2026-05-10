@@ -707,63 +707,25 @@ function projectPointOntoSegment(point, segmentStart, segmentEnd) {
  * Returns: { projectedPoint, cumulativeDistance, segmentIndex, distanceFromCorridor }
  */
 function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unknown") {
-  // ENTRY TELEMETRY
-  console.log("[PROJECTION ENTRY]", {
-    busId,
-    lat: busLat,
-    lng: busLng,
-    hasRouteCoords: !!routeCoordinates,
-    coordCount: routeCoordinates?.length || 0,
-    sample: routeCoordinates?.slice(0, 2)
-  });
-
   // VALIDATE BUS LOCATION
-  if (
-    !Number.isFinite(busLat) ||
-    !Number.isFinite(busLng)
-  ) {
-    console.error("[PROJECTION] INVALID BUS LOCATION", {
-      busLat,
-      busLng,
-    });
+  if (!Number.isFinite(busLat) || !Number.isFinite(busLng)) {
+    console.error("[PROJECTION] INVALID BUS LOCATION", { busLat, busLng });
     return null;
   }
 
   // HARD NORMALIZE route coordinates
-  const normalizedRoute =
-    routeCoordinates
-      .map((c, i) => normalizeCoord(c, i))
-      .filter(Boolean);
+  const normalizedRoute = routeCoordinates.map((c, i) => normalizeCoord(c, i)).filter(Boolean);
 
-  // ROUTE VALIDATION with telemetry
+  // ROUTE VALIDATION with telemetry (keep for mismatch detection)
   const originalCount = routeCoordinates?.length || 0;
   const normalizedCount = normalizedRoute.length;
-  console.log("[ROUTE VALIDATION]", {
-    originalCount,
-    normalizedCount,
-    sample: normalizedRoute.slice(0, 3),
-    sampleCoords: routeCoordinates?.slice(0, 3),
-  });
-
-  if (
-    !Array.isArray(normalizedRoute) ||
-    normalizedRoute.length < 2
-  ) {
-    console.error("[PROJECTION] INVALID ROUTE", {
-      routeLength: normalizedCount,
-    });
+  if (normalizedCount < 2) {
+    console.error("[PROJECTION] INVALID ROUTE", { originalCount, normalizedCount });
     return null;
   }
-
-  // PROJECTION INPUT TELEMETRY
-  console.log("[PROJECTION INPUT]", {
-    busLat,
-    busLng,
-    routePoints: normalizedRoute.length,
-    firstPoint: normalizedRoute[0],
-    lastPoint:
-      normalizedRoute[normalizedRoute.length - 1],
-  });
+  if (normalizedCount !== originalCount) {
+    console.warn("[ROUTE VALIDATION] Mismatch", { originalCount, normalizedCount });
+  }
 
   let minDistance = Infinity;
   let bestProjection = null;
@@ -801,18 +763,16 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     cumulativeDistance += segmentLength;
   }
 
-  // PROJECTION RESULT TELEMETRY
-  console.log("[PROJECTION RESULT]", {
-    found: !!bestProjection?.point,
-    minDistance,
-    segmentIndex: bestSegmentIndex,
-  });
+  // Log only when no projection found (critical failure)
+  if (!bestProjection?.point) {
+    console.warn("[PROJECTION] No valid segment found", { busId, minDistance: Math.round(minDistance) });
+  }
 
   // Calculate precise cumulative distance to projected point
   if (bestProjection && bestProjection.point) {
     const segmentStart = normalizedRoute[bestSegmentIndex];
     if (!segmentStart || !bestProjection.point) {
-      console.log("[PROJECTION SEGMENT]", "BEST_SEGMENT_INVALID", { busId, bestSegmentIndex });
+      console.error("[PROJECTION] Segment invalid", { busId, bestSegmentIndex });
       return null;
     }
     const projectedPoint = bestProjection.point;
@@ -826,23 +786,17 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     const safeTotalRouteLength = safeNumber(cumulativeDistance) ?? 0;
     const safeMinDistance = safeNumber(minDistance) ?? Infinity;
 
-    // PROJECTION DISTANCE CHECK (diagnostic telemetry)
-    const SNAP_THRESHOLD_METERS = 150;
-    console.log("[PROJECTION DISTANCE CHECK]", {
-      minDistance: safeMinDistance,
-      threshold: SNAP_THRESHOLD_METERS,
-      exceeded: safeMinDistance > SNAP_THRESHOLD_METERS,
-    });
+    // PRODUCTION SNAP THRESHOLD: 80m (realistic for mobile GPS + Indian roads)
+    const SNAP_THRESHOLD_METERS = 80;
 
-    // TEMPORARILY DISABLED: Hard threshold rejection
-    // During diagnostics, warn but don't return null
+    // Hard snap validation - reject if too far from corridor
     if (safeMinDistance > SNAP_THRESHOLD_METERS) {
-      console.warn("[PROJECTION] Snap threshold exceeded - continuing for diagnostics", {
+      console.warn("[PROJECTION] Snap rejected", {
         busId,
-        distance: safeMinDistance,
+        minDistance: Math.round(safeMinDistance),
         threshold: SNAP_THRESHOLD_METERS,
       });
-      // DO NOT return null during diagnostics
+      return null;
     }
 
     const result = {
@@ -855,24 +809,16 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
       totalRouteLength: safeTotalRouteLength
     };
 
-    // FULL PROJECTION TELEMETRY
-    console.log("[PROJECTION SUCCESS]", {
-      busId,
-      snappedLat: result.snappedLat,
-      snappedLng: result.snappedLng,
-      distanceFromCorridor: result.distanceFromCorridor,
-      segmentIndex: result.segmentIndex,
-    });
+    // Projection success - minimal telemetry
+    if (result.distanceFromCorridor > 50) {
+      console.log("[PROJECTION] Snap warning", {
+        busId,
+        distance: Math.round(result.distanceFromCorridor),
+      });
+    }
 
     return result;
   }
-
-  // No valid projection found
-  console.log("[PROJECTION EXIT]", "NO_CLOSEST_SEGMENT", {
-    busId,
-    minDistance,
-    coordCount: routeCoordinates.length
-  });
 
   return null;
 }
@@ -1089,154 +1035,76 @@ function calculateETA(remainingDistanceKm, busId) {
  */
 function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy) {
   try {
-    // ENTRY TELEMETRY (as requested)
-    console.log("[COMPUTE ENTRY]", {
-      busId,
-      hasRoute: !!route,
-      hasRouteCoords: !!route?.routeCoords,
-      routeCoordsLength: route?.routeCoords?.length || 0,
-      firstCoord: route?.routeCoords?.[0] || null,
-      hasStops: !!route?.stops,
-      stopsLength: route?.stops?.length || 0
-    });
-    
     // Validate inputs
     if (!Number.isFinite(busLat) || !Number.isFinite(busLng) || !route) {
-      console.log("[COMPUTE EXIT]", "NO_ROUTE", { busId });
       return createFallbackProgression(busId, null, null);
     }
-    
+
     // GPS ACCURACY CHECK: Early validation
     const gpsConfidence = getGpsConfidence(accuracy);
-    
+
     // ROUTE HYDRATION: Normalize route coordinates ONCE with format support
     const rawRouteCoords = route?.routeCoords || route?.coordinates || [];
     const normalizedRouteCoords = (Array.isArray(rawRouteCoords) ? rawRouteCoords : [])
       .map(toLatLng)
       .filter(Boolean);
-    
+
     // Safe validation for route coordinates
     if (normalizedRouteCoords.length < 2) {
-      console.log("[COMPUTE EXIT]", "NO_ROUTE_COORDS", {
-        busId,
-        routeId: route?.id || route?.routeId || null,
-        hasRouteCoords: !!route?.routeCoords,
-        hasCoordinates: !!route?.coordinates,
-        coordsLength: normalizedRouteCoords?.length || 0
-      });
+      console.warn("[PROGRESSION] No route coords", { busId, routeId: route?.routeId, count: normalizedRouteCoords.length });
       return createFallbackProgression(busId, gpsConfidence, accuracy);
     }
-    
+
     // Create normalized route object with guaranteed coordinates
     const normalizedRoute = {
       ...route,
       routeCoords: normalizedRouteCoords,
-      coordinates: normalizedRouteCoords // Ensure both properties exist
+      coordinates: normalizedRouteCoords
     };
-  
-  console.log("[COMPUTE]", "ROUTE_NORMALIZED", {
-    busId,
-    normalizedCoordCount: normalizedRoute.routeCoords.length
-  });
-  
-  // ROUTE VALID TELEMETRY
-  console.log("[PROGRESSION] ROUTE_VALID", {
-    hasCoords: !!normalizedRoute?.routeCoords,
-    coordCount: normalizedRoute?.routeCoords?.length || 0,
-    firstCoord: normalizedRoute?.routeCoords?.[0],
-    lastCoord: normalizedRoute?.routeCoords?.[normalizedRoute?.routeCoords?.length - 1]
-  });
-  
-  // Get previous progression state
-  const prevProgression = getBusProgression(busId);
-  
-  // Convert speed to km/h for display
-  const speedKmh = speedMps * 3.6;
-  
-  // Telemetry before projection (normalized coords)
-  console.log("[BEFORE PROJECTION]", {
-    busId,
-    normalizedRouteCoordsLength: normalizedRoute.routeCoords.length,
-    firstNormalizedCoord: normalizedRoute.routeCoords[0] || null,
-    lastNormalizedCoord: normalizedRoute.routeCoords[normalizedRoute.routeCoords.length - 1] || null
-  });
-  
-  // Project bus position onto route corridor (using normalized coordinates)
-  const projection = projectOntoRouteCorridor(busLat, busLng, normalizedRoute.routeCoords, busId);
-  
-  // Telemetry after projection returns
-  console.log("[COMPUTE]", "PROJECTION_RESPONSE", {
-    busId,
-    hasProjection: !!projection,
-    projectedPoint: projection?.projectedPoint || null,
-    distanceFromRoute: projection?.distanceFromCorridor || null,
-    segmentIndex: projection?.segmentIndex || null
-  });
-  
-  // PROJECTION RESULT TELEMETRY
-  console.log("[PROGRESSION] PROJECTION_RESULT", {
-    projectedPoint: projection?.projectedPoint,
-    distanceFromRoute: projection?.distanceFromCorridor,
-    segmentIndex: projection?.segmentIndex,
-    isWithinThreshold: projection?.distanceFromCorridor <= ROUTE_SNAP_THRESHOLD_METERS
-  });
-  
-  if (!projection) {
-    console.log("[COMPUTE EXIT]", "PROJECTION_FAILED", { busId });
-    return null;
-  }
-  
-  // GPS Jitter Check: Ignore tiny movements
-  let jitterFiltered = false;
-  if (prevProgression?.lastProjectedPoint) {
-    const prevPoint = prevProgression.lastProjectedPoint;
-    const currPoint = projection.projectedPoint;
-    const moveDistance = haversineDistance(
-      prevPoint.lat || prevPoint[0],
-      prevPoint.lng || prevPoint[1],
-      currPoint.lat || currPoint[0],
-      currPoint.lng || currPoint[1]
-    );
-    
-    if (moveDistance < GPS_JITTER_THRESHOLD_METERS) {
-      // Too small to process - return previous progression with updated time
-      jitterFiltered = true;
-      console.log("[PROGRESSION JITTER]", {
-        busId,
-        moveDistance: Math.round(moveDistance) + "m",
-        threshold: GPS_JITTER_THRESHOLD_METERS + "m",
-        action: "filtered"
-      });
-      return {
-        ...prevProgression,
-        lastUpdate: Date.now(),
-        jitterFiltered: true
-      };
+
+    // Get previous progression state
+    const prevProgression = getBusProgression(busId);
+
+    // Convert speed to km/h for display
+    const speedKmh = speedMps * 3.6;
+
+    // Project bus position onto route corridor
+    const projection = projectOntoRouteCorridor(busLat, busLng, normalizedRoute.routeCoords, busId);
+
+    if (!projection) {
+      return null;
     }
-  }
-  
-  // Telemetry before stop progression
-  console.log("[COMPUTE]", "CALLING_STOP_PROGRESSION", {
-    busId,
-    stopCount: normalizedRoute.stops?.length || 0
-  });
-  
-  // Determine stop progression with GPS accuracy awareness
-  const stopProgress = determineStopProgression(
-    projection,
-    normalizedRoute.stops,
-    prevProgression,
-    accuracy,
-    busId
-  );
-  
-  // Telemetry after stop progression
-  console.log("[COMPUTE]", "STOP_PROGRESSION_RESPONSE", {
-    busId,
-    currentStopIndex: stopProgress?.currentStopIndex,
-    nextStopIndex: stopProgress?.nextStopIndex,
-    passedCount: stopProgress?.passedStopIds?.length || 0
-  });
+
+    // JITTER FILTERING: Skip if movement is below threshold
+    let jitterFiltered = false;
+    if (prevProgression?.lastProjectedPoint) {
+      const prevPoint = prevProgression.lastProjectedPoint;
+      const currPoint = projection.projectedPoint;
+      const moveDistance = haversineDistance(
+        prevPoint.lat || prevPoint[0],
+        prevPoint.lng || prevPoint[1],
+        currPoint.lat || currPoint[0],
+        currPoint.lng || currPoint[1]
+      );
+
+      if (moveDistance < GPS_JITTER_THRESHOLD_METERS) {
+        jitterFiltered = true;
+        return {
+          ...prevProgression,
+          lastUpdate: Date.now(),
+          jitterFiltered: true
+        };
+      }
+    }
+
+    // Determine stop progression with GPS accuracy awareness
+    const stopProgress = determineStopProgression(
+      projection,
+      normalizedRoute.stops,
+      prevProgression,
+      accuracy,
+      busId
+    );
   
   // Get stop names for display
   const currentStopId = stopProgress.currentStopIndex >= 0 ? normalizedRoute.stops[stopProgress.currentStopIndex] : null;
@@ -1304,17 +1172,7 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     routeCoords: normalizedRoute.routeCoords // Store normalized coords for downstream use
   };
   
-  // DIAGNOSTIC TELEMETRY: Progression result
-  console.log("[PROGRESSION RESULT]", {
-    busId,
-    currentStopId: progression.currentStopId,
-    currentStopName: progression.currentStopName,
-    nextStopId: progression.nextStopId,
-    nextStopName: progression.nextStopName,
-    passedStops: progression.passedStopIds?.length || 0,
-    eta: progression.etaMinutes || null,
-    progress: progression.progressPercent + "%"
-  });
+  // Progression computed successfully - minimal telemetry
   
   // STOP EVENT ENGINE: Detect ARRIVAL, DWELLING, DEPARTURE lifecycle events
   updateStopEventState(
@@ -1328,29 +1186,15 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   // Store updated progression
   setBusProgression(busId, progression);
   
-  // Debug instrumentation
-  console.log("[PROGRESSION]", {
-    busId,
-    currentStopIndex: progression.currentStopIndex,
-    nextStopIndex: progression.nextStopIndex,
-    remainingDistanceKm: progression.remainingDistanceKm,
-    progressPercent: progression.progressPercent + "%",
-    etaMinutes: progression.etaMinutes + "min",
-    avgSpeed: avgSpeedKmh + "km/h",
-    cumulativeDistance: Math.round(projection.cumulativeDistance) + "m",
-    totalRouteLength: Math.round(projection.totalRouteLength) + "m",
-    jitterFiltered
-  });
+  // Debug instrumentation - reduced for production
+  if (jitterFiltered) {
+    console.log("[PROGRESSION] Jitter filtered", { busId });
+  }
   
-  // FINAL RESULT TELEMETRY
-  console.log("[PROGRESSION] FINAL_RESULT", {
-    isSnapped: true,
-    currentStopId: progression.currentStopId,
-    nextStopId: progression.nextStopId,
-    etaMinutes: progression.etaMinutes,
-    remainingDistanceMeters: progression.remainingDistanceMeters,
-    routeProgressIndex: progression.currentStopIndex
-  });
+  // Final result - only log failures
+  if (progression.nextStopIndex < 0) {
+    console.warn("[PROGRESSION] No next stop", { busId });
+  }
   
   return progression;
   } catch (error) {
