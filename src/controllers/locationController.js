@@ -271,12 +271,12 @@ async function _updateLocationUnsafe(req, res) {
       });
     }
     
-    // Block if explicitly stopped
-    if (state?.trackingActive === false) {
-      console.log("[BACKEND] ❌ BLOCKED - tracking stopped:", busId);
+    // Block if explicitly stopped or no tracking state exists (deleted after STOP)
+    if (!state || state?.trackingActive === false) {
+      console.log("[BACKEND] ❌ BLOCKED - no tracking state or tracking stopped:", busId);
       return res.status(403).json({ error: "Tracking not active" });
     }
-    
+
     // === STRICT VALIDATION ===
     const numLat = Number(lat);
     const numLng = Number(lng);
