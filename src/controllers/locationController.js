@@ -255,21 +255,29 @@ async function _updateLocationUnsafe(req, res) {
       });
     }
     
-    // === TRACKING STATE AUTO-INIT ===
+    // === TRACKING STATE GUARD ===
+    // Require existing state from startTracking - do NOT auto-init
+    // This prevents stale packets from reviving stopped buses
     let state = trackingState.get(busId);
     console.log("[BACKEND] trackingState exists:", !!state);
-    
+
     if (!state) {
-      console.log("[BACKEND] Auto-initializing tracking state for:", busId);
-      state = {
-        trackingActive: true,
-        sos: false,
-        lastUpdate: Date.now(),
-        location: null
-      };
-      trackingState.set(busId, state);
+      console.log("[BACKEND] BLOCKED - no tracking state (bus never started):", busId);
+      return res.status(403).json({
+        error: "Tracking not started",
+        ignored: true
+      });
     }
-    
+
+    // Block stale packets from inactive buses
+    if (state?.trackingActive === false) {
+      console.log("[BACKEND BLOCKED] inactive bus packet:", busId);
+      return res.status(200).json({
+        ignored: true,
+        inactive: true
+      });
+    }
+
     // === HANDLE STOP SIGNAL ===
     // If driver sends trackingActive: false, mark bus offline immediately
     if (req.body.trackingActive === false) {
@@ -287,12 +295,6 @@ async function _updateLocationUnsafe(req, res) {
       });
     }
     
-    // Block if explicitly stopped or no tracking state exists (deleted after STOP)
-    if (!state || state?.trackingActive === false) {
-      console.log("[BACKEND] ❌ BLOCKED - no tracking state or tracking stopped:", busId);
-      return res.status(403).json({ error: "Tracking not active" });
-    }
-
     // === STRICT VALIDATION ===
     const numLat = Number(lat);
     const numLng = Number(lng);
