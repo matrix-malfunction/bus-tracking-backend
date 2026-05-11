@@ -54,6 +54,29 @@ function normalizeCoord(coord, index = 0) {
     return null;
   }
 
+  // MongoDB / GeoJSON object {latitude, longitude}
+  if (
+    typeof coord === "object" &&
+    !Array.isArray(coord) &&
+    typeof coord.latitude !== "undefined" &&
+    typeof coord.longitude !== "undefined"
+  ) {
+    const lat = Number(coord.latitude);
+    const lng = Number(coord.longitude);
+
+    if (
+      Number.isFinite(lat) &&
+      Number.isFinite(lng) &&
+      Math.abs(lat) <= 90 &&
+      Math.abs(lng) <= 180
+    ) {
+      return { lat, lng };
+    }
+
+    console.log("[COORD INVALID] MongoDB format out of range", { index, lat, lng });
+    return null;
+  }
+
   // Array format - auto-detect order
   if (Array.isArray(coord) && coord.length >= 2) {
     const a = Number(coord[0]);
@@ -786,8 +809,9 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     const safeTotalRouteLength = safeNumber(cumulativeDistance) ?? 0;
     const safeMinDistance = safeNumber(minDistance) ?? Infinity;
 
-    // PRODUCTION SNAP THRESHOLD: 80m (realistic for mobile GPS + Indian roads)
-    const SNAP_THRESHOLD_METERS = 80;
+    // DEBUG SNAP THRESHOLD: 300m (temporarily increased for diagnostic tolerance)
+    const SNAP_THRESHOLD_METERS = 300;
+    console.log("[PROJECTION THRESHOLD]", SNAP_THRESHOLD_METERS);
 
     // Hard snap validation - reject if too far from corridor
     if (safeMinDistance > SNAP_THRESHOLD_METERS) {
@@ -1005,7 +1029,7 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
     nextStopDistance = stopDistances[nextStopIndex].distance;
   }
   
-  return { currentStopIndex, nextStopIndex, passedStopIds, currentStopDistance, nextStopDistance };
+  return { currentStopIndex, nextStopIndex, passedStopIds, currentStopDistance, nextStopDistance, effectiveArrivalThreshold, effectiveHysteresis };
 }
 
 /**
@@ -1036,7 +1060,18 @@ function calculateETA(remainingDistanceKm, busId) {
 function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy) {
   try {
     // Validate inputs
+    console.log("[PROGRESSION INPUT]", {
+      busId,
+      lat: busLat,
+      lng: busLng,
+      routeCoordsCount: route?.routeCoords?.length || route?.coordinates?.length,
+      stopCount: route?.stops?.length,
+      hasRouteCoordinates: !!(route?.routeCoords?.length || route?.coordinates?.length),
+      hasStops: !!route?.stops?.length,
+    });
+
     if (!Number.isFinite(busLat) || !Number.isFinite(busLng) || !route) {
+      console.log("[PROGRESSION EARLY RETURN]", "INVALID_INPUTS");
       return createFallbackProgression(busId, null, null);
     }
 
@@ -1051,9 +1086,12 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
 
     // Safe validation for route coordinates
     if (normalizedRouteCoords.length < 2) {
+      console.log("[PROGRESSION EARLY RETURN]", "NO_ROUTE_COORDS");
       console.warn("[PROGRESSION] No route coords", { busId, routeId: route?.routeId, count: normalizedRouteCoords.length });
       return createFallbackProgression(busId, gpsConfidence, accuracy);
     }
+
+    console.log("[ROUTE SAMPLE]", normalizedRouteCoords.slice(0, 5));
 
     // Create normalized route object with guaranteed coordinates
     const normalizedRoute = {
@@ -1071,7 +1109,16 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     // Project bus position onto route corridor
     const projection = projectOntoRouteCorridor(busLat, busLng, normalizedRoute.routeCoords, busId);
 
+    console.log("[PROJECTION RESULT]", {
+      projected: !!projection,
+      snappedLat: projection?.snappedLat,
+      snappedLng: projection?.snappedLng,
+      distanceFromRoute: projection?.distanceFromRoute,
+      segmentIndex: projection?.segmentIndex,
+    });
+
     if (!projection) {
+      console.log("[PROGRESSION EARLY RETURN]", "PROJECTION_FAILED");
       return null;
     }
 
@@ -1105,6 +1152,7 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       accuracy,
       busId
     );
+    const { effectiveArrivalThreshold, effectiveHysteresis } = stopProgress;
   
   // Get stop names for display
   const currentStopId = stopProgress.currentStopIndex >= 0 ? normalizedRoute.stops[stopProgress.currentStopIndex] : null;
@@ -1150,8 +1198,8 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     gpsConfidence,
     gpsAccuracy: safeNumber(accuracy) || null,
     effectiveThreshold: safeNumber(effectiveThreshold) || STOP_ARRIVAL_THRESHOLD_METERS,
-    tripId: state.tripId,
-    routeId: state.routeId,
+    tripId: normalizedRoute.tripId || null,
+    routeId: normalizedRoute.routeId || null,
     currentStopIndex: stopProgress.currentStopIndex,
     currentStopId,
     currentStopName,
@@ -1163,7 +1211,7 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     remainingDistanceMeters: safeNumber(remainingDistanceMeters) || null,
     progressPercent: safeNumber(progressPercent) || 0,
     etaMinutes: safeNumber(etaMinutes) || null,
-    avgSpeedKmh: safeNumber(Math.round(avgSpeedKmh * 10) / 10) || 0,
+    avgSpeedKmh: safeNumber(Math.round(rollingSpeedKmh * 10) / 10) || 0,
     cumulativeDistance: safeNumber(Math.round(projection.cumulativeDistance)) || 0,
     totalRouteLength: safeNumber(Math.round(projection.totalRouteLength)) || 0,
     lastProjectedPoint: projection.projectedPoint || null,
@@ -1172,6 +1220,15 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     routeCoords: normalizedRoute.routeCoords // Store normalized coords for downstream use
   };
   
+  console.log("[FINAL PROGRESSION]", {
+    currentStopName,
+    nextStopName,
+    nextStopEtaMinutes: etaMinutes,
+    routeProgressIndex: stopProgress.currentStopIndex,
+    isSnapped: !!projection,
+    distanceFromRoute: projection?.distanceFromRoute,
+  });
+
   // Progression computed successfully - minimal telemetry
   
   // STOP EVENT ENGINE: Detect ARRIVAL, DWELLING, DEPARTURE lifecycle events

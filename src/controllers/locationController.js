@@ -599,6 +599,15 @@ async function _updateLocationUnsafe(req, res) {
           etaMinutes: safePayload.nextStopEtaMinutes
         });
 
+        console.log("[EMIT PAYLOAD]", {
+          busId,
+          currentStopName: safePayload.currentStopName,
+          nextStopName: safePayload.nextStopName,
+          nextStopEtaMinutes: safePayload.nextStopEtaMinutes,
+          routeProgressIndex: safePayload.routeProgressIndex,
+          isSnapped: safePayload.isSnapped,
+        });
+
         console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", safePayload);
         console.log("[ROUTE EMIT]", {
           busId: safePayload.busId,
