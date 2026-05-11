@@ -3,7 +3,7 @@ const Route = require("../models/Route");
 const Stop = require("../models/Stop");
 const Schedule = require("../models/Schedule");
 const DriverEmergency = require("../models/DriverEmergency");
-const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute, computeDerivedSpeed, getBusProgression } = require("../utils/trackingState");
+const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute, computeDerivedSpeed, getBusProgression, haversineDistance } = require("../utils/trackingState");
 const routes = require("../../data/routes"); // Route master data
 const { computeBusProgression, hasProgressionChanged, GPS_JITTER_THRESHOLD_METERS, onStopEvent, toLatLng, projectOntoRouteCorridor } = require("../utils/progressionEngine");
 const { ALL_STOPS, getStopNameById } = require("../services/overpassService");
@@ -475,7 +475,35 @@ async function _updateLocationUnsafe(req, res) {
     // === COMPUTE DERIVED SPEED FOR RELIABLE MOVEMENT DETECTION ===
     // Compute speed from position changes (more reliable than Expo GPS speed)
     const timestamp = Date.now();
-    const { derivedSpeed } = computeDerivedSpeed(busId, numLat, numLng, timestamp);
+
+    // Snapshot previous state BEFORE computeDerivedSpeed mutates prevLat/prevLng
+    const prevStateBeforeCompute = trackingState.get(busId) || {};
+    const hadPreviousPosition = prevStateBeforeCompute.prevLat != null && prevStateBeforeCompute.prevLng != null && prevStateBeforeCompute.prevTimestamp != null;
+
+    const { derivedSpeed: rawDerivedSpeed } = computeDerivedSpeed(busId, numLat, numLng, timestamp);
+
+    let derivedSpeed = rawDerivedSpeed;
+
+    // Validate first real GPS delta: reject unrealistic spikes that clamp to 120
+    if (hadPreviousPosition) {
+      const timeDiffSec = (timestamp - prevStateBeforeCompute.prevTimestamp) / 1000;
+      if (timeDiffSec > 0.5 && timeDiffSec < 60) {
+        const distanceMeters = haversineDistance(prevStateBeforeCompute.prevLat, prevStateBeforeCompute.prevLng, numLat, numLng);
+        const rawSpeedKmh = (distanceMeters / timeDiffSec) * 3.6;
+        // Reject unrealistic startup jumps (>100 km/h or >500m in one update)
+        if (rawSpeedKmh > 100 || distanceMeters > 500) {
+          derivedSpeed = prevStateBeforeCompute.derivedSpeed || 0;
+          console.log("[DERIVED SPEED VALIDATION]", {
+            busId,
+            rawSpeedKmh: Math.round(rawSpeedKmh),
+            distanceMeters: Math.round(distanceMeters),
+            prevDerivedSpeed: prevStateBeforeCompute.derivedSpeed || 0,
+            clampedTo: derivedSpeed,
+            reason: "unrealistic_startup_spike_rejected"
+          });
+        }
+      }
+    }
     
     // === COMPUTE BUS PROGRESSION (ETA, Stop Detection, Events) ===
     // CRITICAL: Progression is optional enrichment - tracking must survive failures
