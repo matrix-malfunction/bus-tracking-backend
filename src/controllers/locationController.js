@@ -478,6 +478,7 @@ async function _updateLocationUnsafe(req, res) {
     // === COMPUTE DERIVED SPEED FOR RELIABLE MOVEMENT DETECTION ===
     // Compute speed from position changes (more reliable than Expo GPS speed)
     const timestamp = Date.now();
+    const { derivedSpeed } = computeDerivedSpeed(busId, numLat, numLng, timestamp);
     
     // === COMPUTE BUS PROGRESSION (ETA, Stop Detection, Events) ===
     // CRITICAL: Progression is optional enrichment - tracking must survive failures
@@ -547,6 +548,14 @@ async function _updateLocationUnsafe(req, res) {
           snappedLat: progression?.lastProjectedPoint?.lat || null,
           snappedLng: progression?.lastProjectedPoint?.lng || null,
           distance: progression?.distanceFromCorridor || null,
+        });
+
+        console.log("[PROGRESSION RESULT]", {
+          busId,
+          currentStopName: progression?.currentStopName,
+          nextStopName: progression?.nextStopName,
+          nextStopEtaMinutes: progression?.etaMinutes,
+          routeProgressIndex: progression?.currentStopIndex,
         });
       }
 
@@ -663,7 +672,7 @@ async function _updateLocationUnsafe(req, res) {
             routeColor: routeInfo.routeColor,
             direction: routeInfo.direction,
             tripId: routeInfo.tripId,
-            routeCoords: routeCoords
+            routeCoords: routeInfo.routeCoords || routeCoords || []
           }),
           // Include progression fields for live stop display (from progression engine)
           ...(progression && {
@@ -724,6 +733,15 @@ async function _updateLocationUnsafe(req, res) {
           nextStopEtaMinutes: safePayload.nextStopEtaMinutes,
           routeProgressIndex: safePayload.routeProgressIndex,
           isSnapped: safePayload.isSnapped,
+        });
+
+        console.log("[EMIT PREVIEW]", {
+          busId,
+          currentStopName: safePayload?.currentStopName,
+          nextStopName: safePayload?.nextStopName,
+          derivedSpeed: safePayload?.derivedSpeed,
+          routeCoordsCount: safePayload?.routeCoords?.length,
+          routeProgressIndex: safePayload?.routeProgressIndex,
         });
 
         console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", safePayload);
@@ -806,10 +824,22 @@ async function _updateLocationUnsafe(req, res) {
       lat: numLat,
       lng: numLng,
       speed: speed, // Always use driver speed, no fallback
+      derivedSpeed: derivedSpeed || 0,
       heading: Math.round(heading),
       lastUpdate: Date.now(),
       trackingActive: true,
       location: { latitude: numLat, longitude: numLng },
+      ...(progression && {
+        currentStopId: progression.currentStopId ?? null,
+        currentStopName: progression.currentStopName ?? null,
+        nextStopId: progression.nextStopId ?? null,
+        nextStopName: progression.nextStopName ?? null,
+        nextStopEtaMinutes: progression.etaMinutes ?? null,
+        routeProgressIndex: progression.currentStopIndex ?? null,
+        remainingDistanceMeters: progression.remainingDistanceMeters ?? null,
+        passedStopIds: progression.passedStopIds || [],
+        isSnapped: !!progression.lastProjectedPoint,
+      }),
     });
     console.log("[BACKEND] ✅ State updated (MERGED):", busId, "speed:", Math.round(speed), "km/h", "route:", existingBus.routeId || "none");
     
