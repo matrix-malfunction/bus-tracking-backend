@@ -1263,14 +1263,13 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
 
       const nextDistance = distanceMeters(busLat, busLng, nextStop.lat, nextStop.lng);
       const fallbackSpeedKmh = speedMps * 3.6;
-      const safeSpeed = fallbackSpeedKmh && fallbackSpeedKmh > 5 ? fallbackSpeedKmh : 25;
 
-      // Effective speed: fallback to demo speed when derivedSpeed is 0 (dense route micro-movements)
+      // Effective speed: use actual driver speed, no hardcoded fallbacks
       const prevTrackingState = getTrackingState(busId);
       const rawDerivedSpeed = prevTrackingState?.derivedSpeed || 0;
       const effectiveSpeed = rawDerivedSpeed && rawDerivedSpeed > 5
         ? Math.round(rawDerivedSpeed)
-        : Math.round(fallbackSpeedKmh || safeSpeed || 35);
+        : Math.round(fallbackSpeedKmh || 35);
       const etaSpeedKmh = Math.max(15, effectiveSpeed);
       const etaMinutes = Math.max(1, Math.round(nextDistance / ((etaSpeedKmh * 1000) / 60)));
 
@@ -1321,7 +1320,7 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
         remainingDistanceMeters: 0,
         progressPercent: routeProgressPercent,
         etaMinutes,
-        avgSpeedKmh: safeSpeed,
+        avgSpeedKmh: effectiveSpeed,
         derivedSpeed: effectiveSpeed,
         occupancy: Math.floor(25 + Math.random() * 35),
         capacity: 50,
