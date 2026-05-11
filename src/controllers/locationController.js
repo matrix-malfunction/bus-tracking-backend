@@ -481,17 +481,17 @@ async function _updateLocationUnsafe(req, res) {
     
     // === COMPUTE BUS PROGRESSION (ETA, Stop Detection, Events) ===
     // CRITICAL: Progression is optional enrichment - tracking must survive failures
+    // HOISTED: routeInfo declared here — prevents TDZ ReferenceError inside try block
+    const routeInfo = getBusRoute(busId);
     let progression = null;
     let routeForProgression = null;
     try {
-      const activeRouteInfo = getBusRoute(busId);
       // Use normalizeRoute to handle field name migration (coordinates -> routeCoords)
-      routeForProgression = normalizeRoute(activeRouteInfo) || normalizeRoute(routeInfo);
+      routeForProgression = normalizeRoute(routeInfo);
 
       // TELEMETRY: Route data before computeBusProgression
       console.log("[ROUTE TELEMETRY]", {
         busId,
-        hasActiveRouteInfo: !!activeRouteInfo,
         hasRouteInfo: !!routeInfo,
         routeId: routeForProgression?.routeId || null,
         hasRouteCoords: !!(routeForProgression?.routeCoords && routeForProgression?.routeCoords.length > 0),
@@ -501,7 +501,7 @@ async function _updateLocationUnsafe(req, res) {
         hasStops: !!(routeForProgression?.stops && routeForProgression?.stops.length > 0),
         stopsLength: routeForProgression?.stops?.length || 0,
         firstStop: routeForProgression?.stops?.[0] || null,
-        source: activeRouteInfo ? "activeRouteInfo" : (routeInfo ? "routeInfo" : "none")
+        source: routeInfo ? "routeInfo" : "none"
       });
 
       console.log("[MOVEMENT DELTA]", {
@@ -515,14 +515,22 @@ async function _updateLocationUnsafe(req, res) {
       // FLOW TELEMETRY STEP 5: Before computeBusProgression
       console.log("[FLOW] STEP 5 - Before computeBusProgression");
 
-      if (routeForProgression && routeForProgression.routeCoords && routeForProgression.routeCoords.length >= 2) {
-        // TELEMETRY: Route data for progression
-        console.log("[ROUTE TELEMETRY]", {
+      const safeRouteCoordinates = routeForProgression?.routeCoords || [];
+      const safeStops = routeForProgression?.stops || [];
+
+      if (!safeRouteCoordinates.length || safeRouteCoordinates.length < 2) {
+        console.log("[PROGRESSION BLOCKED] Invalid route coordinates", {
           busId,
-          hasRoute: !!routeForProgression,
-          routeCoordsLength: routeForProgression?.routeCoords?.length || 0,
-          stopsCount: routeForProgression?.stops?.length || 0,
-          firstCoord: routeForProgression?.routeCoords?.[0],
+          routeId: routeForProgression?.routeId,
+          coords: safeRouteCoordinates.length,
+        });
+      } else {
+        console.log("[PROGRESSION INPUT]", {
+          busId,
+          routePoints: safeRouteCoordinates.length,
+          stops: safeStops.length,
+          lat: numLat,
+          lng: numLng,
         });
 
         progression = computeBusProgression(
@@ -530,13 +538,12 @@ async function _updateLocationUnsafe(req, res) {
           numLat,
           numLng,
           speed,
-          routeForProgression,
+          { ...routeForProgression, routeCoords: safeRouteCoordinates, stops: safeStops },
           accuracy
         );
 
-        // VERIFY PROJECTION BEFORE PROGRESSION
-        console.log("[SNAP RESULT]", {
-          isSnapped: !!(progression?.lastProjectedPoint),
+        console.log("[PROJECTION RESULT]", {
+          projected: !!progression,
           snappedLat: progression?.lastProjectedPoint?.lat || null,
           snappedLng: progression?.lastProjectedPoint?.lng || null,
           distance: progression?.distanceFromCorridor || null,
@@ -573,8 +580,7 @@ async function _updateLocationUnsafe(req, res) {
     // CRITICAL: This is an optional enhancement - tracking must continue even if snapping fails
     let snappedCoords = null;
     
-    // EXECUTION TRACE: Track route lookup
-    const routeInfo = getBusRoute(busId);
+    // EXECUTION TRACE: Track route lookup (routeInfo already hoisted above)
     console.log("[SNAP TRACE] busId:", busId, "routeInfo:", routeInfo);
     
     let routeData = null;
@@ -767,11 +773,15 @@ async function _updateLocationUnsafe(req, res) {
         // === UPDATE + EMIT STOP ARRIVALS ===
         if (progression) {
           try {
-            updateStopArrivals(busId, progression, routeForProgression, routeInfo);
-            const arrivalsPayload = { stopArrivals: Object.fromEntries(stopArrivalsMap) };
-            const safeArrivals = JSON.parse(JSON.stringify(arrivalsPayload));
-            console.log('[STOP ARRIVALS] Emitting STOP_ARRIVALS_UPDATE, stops:', Object.keys(safeArrivals.stopArrivals).length);
-            io.emit('STOP_ARRIVALS_UPDATE', safeArrivals);
+            if (!progression.currentStopId && !progression.nextStopId) {
+              console.log('[STOP ARRIVALS BLOCKED]', { busId, reason: 'NO_VALID_PROGRESSION' });
+            } else {
+              updateStopArrivals(busId, progression, routeForProgression, routeInfo);
+              const arrivalsPayload = { stopArrivals: Object.fromEntries(stopArrivalsMap) };
+              const safeArrivals = JSON.parse(JSON.stringify(arrivalsPayload));
+              console.log('[STOP ARRIVALS] Emitting STOP_ARRIVALS_UPDATE, stops:', Object.keys(safeArrivals.stopArrivals).length);
+              io.emit('STOP_ARRIVALS_UPDATE', safeArrivals);
+            }
           } catch (arrivalsError) {
             console.error('[STOP ARRIVALS] Update failed:', arrivalsError.message);
           }
@@ -1228,21 +1238,39 @@ const startTracking = async (req, res) => {
         ? (route.stops || []) // OUTBOUND uses stops array
         : (route.returnStops || route.stops || []); // INBOUND uses returnStops or falls back to stops
 
-      // Build route corridor coordinates from ordered stops
+      // Stop-position fallback: sparse coords derived from stop locations
       const { ALL_STOPS } = require("../services/overpassService");
-      const routeCoords = directionStops.map(stopId => {
+      const stopPositionCoords = directionStops.map(stopId => {
         const stop = ALL_STOPS.find(s => s.id === stopId);
         return stop ? [stop.lat, stop.lng] : null;
       }).filter(Boolean);
+
+      // Dense polyline: use full route.coordinates for accurate projection + ETA
+      // INBOUND reverses the outbound polyline to match direction of travel
+      const rawPolyline = direction === "INBOUND"
+        ? [...(route.returnCoordinates || route.coordinates || [])].reverse()
+        : (route.coordinates || []);
+      const denseCoords = rawPolyline.length >= 2 ? rawPolyline : stopPositionCoords;
 
       routeData = {
         routeId: route.id,
         routeName: routeName || route.name,
         routeColor: routeColor || route.color,
         direction: direction,
-        stops: directionStops, // Direction-specific stop IDs
-        routeCoords: routeCoords // Coordinates for progression
+        stops: directionStops,
+        routeCoords: denseCoords
       };
+
+      console.log("[ROUTE HYDRATION]", {
+        routeId: route.id,
+        routeName: route.name,
+        direction,
+        routeCoordsCount: denseCoords.length,
+        stopsCount: directionStops.length,
+        hasRouteCoordinates: denseCoords.length > 0,
+        hasStops: directionStops.length > 0,
+        source: rawPolyline.length >= 2 ? "dense_polyline" : "stop_positions",
+      });
 
       console.log("[BACKEND] Route validated:", route.name, "-", direction, "Stops:", directionStops.length);
     }
