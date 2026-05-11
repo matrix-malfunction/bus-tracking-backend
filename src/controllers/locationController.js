@@ -578,6 +578,17 @@ async function _updateLocationUnsafe(req, res) {
         // Safe payload serialization - prevents circular references and NaN
         const safePayload = JSON.parse(JSON.stringify(emitPayload));
         
+        // Progression telemetry
+        if (progression) {
+          console.log("[PROGRESSION]", {
+            busId,
+            currentStopName: safePayload.currentStopName,
+            nextStopName: safePayload.nextStopName,
+            nextStopEtaMinutes: safePayload.nextStopEtaMinutes,
+            routeProgressIndex: safePayload.routeProgressIndex
+          });
+        }
+
         // Emit telemetry
         console.log("[LOCATION]", "EMIT_PAYLOAD", {
           busId,
@@ -587,7 +598,7 @@ async function _updateLocationUnsafe(req, res) {
           nextStopId: safePayload.nextStopId,
           etaMinutes: safePayload.nextStopEtaMinutes
         });
-        
+
         console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE:", safePayload);
         console.log("[ROUTE EMIT]", {
           busId: safePayload.busId,
