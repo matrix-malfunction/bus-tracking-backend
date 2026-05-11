@@ -848,8 +848,8 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     const safeTotalRouteLength = safeNumber(cumulativeDistance) ?? 0;
     const safeMinDistance = safeNumber(minDistance) ?? Infinity;
 
-    // DEBUG SNAP THRESHOLD: 300m (temporarily increased for diagnostic tolerance)
-    const SNAP_THRESHOLD_METERS = 300;
+    // DEBUG SNAP THRESHOLD: 1000m (temporarily increased for geometry mismatch diagnosis)
+    const SNAP_THRESHOLD_METERS = 1000;
     console.log("[PROJECTION THRESHOLD]", SNAP_THRESHOLD_METERS);
 
     console.log("[THRESHOLD CHECK]", {

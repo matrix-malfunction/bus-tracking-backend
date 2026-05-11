@@ -534,6 +534,14 @@ async function _updateLocationUnsafe(req, res) {
           lng: numLng,
         });
 
+        console.log("[GEOMETRY CHECK]", {
+          busId,
+          gps: { lat: numLat, lng: numLng },
+          firstRoutePoint: safeRouteCoordinates[0],
+          lastRoutePoint: safeRouteCoordinates[safeRouteCoordinates.length - 1],
+          routePoints: safeRouteCoordinates.length,
+        });
+
         progression = computeBusProgression(
           busId,
           numLat,
@@ -557,6 +565,15 @@ async function _updateLocationUnsafe(req, res) {
           nextStopEtaMinutes: progression?.etaMinutes,
           routeProgressIndex: progression?.currentStopIndex,
         });
+
+        if (!progression?.lastProjectedPoint) {
+          console.warn("[PROJECTION FAILED]", {
+            busId,
+            gps: { lat: numLat, lng: numLng },
+            routePoints: safeRouteCoordinates.length,
+            distanceFromRoute: progression?.distanceFromCorridor ?? null,
+          });
+        }
       }
 
       if (progression) {
