@@ -6,12 +6,95 @@ const DriverEmergency = require("../models/DriverEmergency");
 const { isTrackingActive, setTrackingActive, getTrackingState, trackingState, setBusRoute, getBusRoute, computeDerivedSpeed, getBusProgression } = require("../utils/trackingState");
 const routes = require("../../data/routes"); // Route master data
 const { computeBusProgression, hasProgressionChanged, GPS_JITTER_THRESHOLD_METERS, onStopEvent, toLatLng, projectOntoRouteCorridor } = require("../utils/progressionEngine");
-const { ALL_STOPS } = require("../services/overpassService");
+const { ALL_STOPS, getStopNameById } = require("../services/overpassService");
 // Speed comes directly from driver app - no backend recalculation needed
 
 const { chooseBestSource } = require("../services/hybridSourceSelector");
 const { haversineKm } = require("../services/etaService");
 const { defaultCache } = require("../services/locationCache");
+
+// ===== STOP ARRIVALS MAP =====
+// In-memory: stopId → { stopId, stopName, arrivals: [...] }
+const stopArrivalsMap = new Map();
+
+function _setArrivalEntry(stopId, stopName, arrival) {
+  const key = String(stopId);
+  if (!stopArrivalsMap.has(key)) {
+    stopArrivalsMap.set(key, { stopId: key, stopName: stopName || key, arrivals: [] });
+  }
+  const entry = stopArrivalsMap.get(key);
+  if (stopName) entry.stopName = stopName;
+  entry.arrivals = entry.arrivals.filter(a => a.busId !== arrival.busId);
+  entry.arrivals.push(arrival);
+  const statusOrder = { AT_STOP: 0, ARRIVING: 1, UPCOMING: 2, DEPARTED: 3 };
+  entry.arrivals.sort((a, b) => {
+    const aO = statusOrder[a.status] ?? 2;
+    const bO = statusOrder[b.status] ?? 2;
+    if (aO !== bO) return aO - bO;
+    if (a.etaMinutes == null) return 1;
+    if (b.etaMinutes == null) return -1;
+    return a.etaMinutes - b.etaMinutes;
+  });
+  if (entry.arrivals.length > 5) entry.arrivals = entry.arrivals.slice(0, 5);
+}
+
+function updateStopArrivals(busId, progression, routeForProgression, routeInfoArg) {
+  if (!busId || !progression) return;
+  const { currentStopId, currentStopName, nextStopId, nextStopName, etaMinutes, nextStopIndex } = progression;
+  const routeMeta = routeForProgression || routeInfoArg || {};
+  const arrivalBase = {
+    busId,
+    routeId: routeMeta.routeId || null,
+    routeName: routeMeta.routeName || null,
+    direction: routeMeta.direction || null,
+    lastUpdate: Date.now()
+  };
+  if (currentStopId) {
+    _setArrivalEntry(currentStopId, currentStopName, {
+      ...arrivalBase,
+      etaMinutes: 0,
+      currentStopName: currentStopName || null,
+      nextStopName: nextStopName || null,
+      status: 'AT_STOP'
+    });
+  }
+  if (nextStopId) {
+    const nextStatus = (etaMinutes != null && etaMinutes <= 1) ? 'ARRIVING' : 'UPCOMING';
+    _setArrivalEntry(nextStopId, nextStopName, {
+      ...arrivalBase,
+      etaMinutes: etaMinutes != null ? etaMinutes : null,
+      currentStopName: currentStopName || null,
+      nextStopName: nextStopName || null,
+      status: nextStatus
+    });
+  }
+  const routeStops = routeMeta.stops;
+  if (Array.isArray(routeStops) && nextStopIndex >= 0) {
+    const upEnd = Math.min(nextStopIndex + 4, routeStops.length);
+    for (let i = nextStopIndex + 1; i < upEnd; i++) {
+      const raw = routeStops[i];
+      const sid = typeof raw === 'object' ? (raw.id || raw._id) : raw;
+      if (!sid) continue;
+      const sname = (typeof raw === 'object' ? raw.name : null) || getStopNameById(sid) || String(sid);
+      _setArrivalEntry(sid, sname, {
+        ...arrivalBase,
+        etaMinutes: null,
+        currentStopName: currentStopName || null,
+        nextStopName: nextStopName || null,
+        status: 'UPCOMING'
+      });
+    }
+  }
+}
+
+function clearBusFromStopArrivals(busId) {
+  stopArrivalsMap.forEach((entry, stopId) => {
+    entry.arrivals = entry.arrivals.filter(a => a.busId !== busId);
+    if (entry.arrivals.length === 0) stopArrivalsMap.delete(stopId);
+  });
+  console.log('[STOP ARRIVALS] Cleared bus:', busId);
+}
+// ===== END STOP ARRIVALS =====
 
 const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 const EMIT_DISTANCE_THRESHOLD_METERS = 15;
@@ -293,6 +376,13 @@ async function _updateLocationUnsafe(req, res) {
       // Use setTrackingActive to properly emit BUS_OFFLINE and delete from trackingState
       setTrackingActive(busId, false, io);
 
+      // Clean ghost arrivals for this bus
+      clearBusFromStopArrivals(busId);
+      try {
+        const arrivalsPayload = { stopArrivals: Object.fromEntries(stopArrivalsMap) };
+        io.emit('STOP_ARRIVALS_UPDATE', JSON.parse(JSON.stringify(arrivalsPayload)));
+      } catch (e) {}
+
       return res.json({
         success: true,
         offline: true,
@@ -392,10 +482,11 @@ async function _updateLocationUnsafe(req, res) {
     // === COMPUTE BUS PROGRESSION (ETA, Stop Detection, Events) ===
     // CRITICAL: Progression is optional enrichment - tracking must survive failures
     let progression = null;
+    let routeForProgression = null;
     try {
       const activeRouteInfo = getBusRoute(busId);
       // Use normalizeRoute to handle field name migration (coordinates -> routeCoords)
-      const routeForProgression = normalizeRoute(activeRouteInfo) || normalizeRoute(routeInfo);
+      routeForProgression = normalizeRoute(activeRouteInfo) || normalizeRoute(routeInfo);
 
       // TELEMETRY: Route data before computeBusProgression
       console.log("[ROUTE TELEMETRY]", {
@@ -670,6 +761,19 @@ async function _updateLocationUnsafe(req, res) {
           } catch (progressEmitError) {
             console.error("[BACKEND] ⚠️ Progress emit failed:", progressEmitError.message);
             // Non-fatal: continue tracking
+          }
+        }
+
+        // === UPDATE + EMIT STOP ARRIVALS ===
+        if (progression) {
+          try {
+            updateStopArrivals(busId, progression, routeForProgression, routeInfo);
+            const arrivalsPayload = { stopArrivals: Object.fromEntries(stopArrivalsMap) };
+            const safeArrivals = JSON.parse(JSON.stringify(arrivalsPayload));
+            console.log('[STOP ARRIVALS] Emitting STOP_ARRIVALS_UPDATE, stops:', Object.keys(safeArrivals.stopArrivals).length);
+            io.emit('STOP_ARRIVALS_UPDATE', safeArrivals);
+          } catch (arrivalsError) {
+            console.error('[STOP ARRIVALS] Update failed:', arrivalsError.message);
           }
         }
       } else {
