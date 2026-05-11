@@ -802,6 +802,7 @@ async function _updateLocationUnsafe(req, res) {
         console.log("[SOCKET FINAL VERIFY]", {
           currentStopName: safePayload.currentStopName,
           nextStopName: safePayload.nextStopName,
+          nextStopEtaMinutes: safePayload.nextStopEtaMinutes,
           routeProgressIndex: safePayload.routeProgressIndex,
           isSnapped: safePayload.isSnapped,
         });
@@ -910,6 +911,7 @@ async function _updateLocationUnsafe(req, res) {
     console.log("[TRACKING STATE FINAL]", {
       currentStopName: updatedTrackingState?.currentStopName,
       nextStopName: updatedTrackingState?.nextStopName,
+      nextStopEtaMinutes: updatedTrackingState?.nextStopEtaMinutes,
       routeProgressIndex: updatedTrackingState?.routeProgressIndex,
       isSnapped: updatedTrackingState?.isSnapped,
     });

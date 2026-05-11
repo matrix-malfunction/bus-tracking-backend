@@ -678,6 +678,21 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 }
 
 /**
+ * Demo-safe distance helper
+ */
+function distanceMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
  * Find nearest point on a line segment
  * Returns: { point: {lat, lng}, distance: meters, segmentIndex: number }
  */
@@ -1193,6 +1208,78 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       routeCoords: normalizedRouteCoords,
       coordinates: normalizedRouteCoords
     };
+
+    // === DEMO-SAFE FALLBACK PROGRESSION ===
+    // Bypasses complex corridor projection for stable nearest-stop + next-stop + ETA output
+    const rawStops = normalizedRoute.stops || [];
+    const demoStops = rawStops.map((stop) => {
+      if (typeof stop === "string") {
+        const coords = getStopCoordsById(stop);
+        return coords ? { stopId: stop, name: getSafeStopName(stop), lat: coords.lat, lng: coords.lng } : null;
+      }
+      const lat = stop.lat ?? stop.latitude;
+      const lng = stop.lng ?? stop.longitude;
+      const stopId = stop.stopId || stop.id || stop._id || null;
+      const name = stop.name || getSafeStopName(stop) || null;
+      return typeof lat === "number" && typeof lng === "number" ? { stopId, name, lat, lng } : null;
+    }).filter(Boolean);
+
+    if (demoStops.length >= 2) {
+      let nearestIndex = 0;
+      let nearestDistance = Infinity;
+
+      demoStops.forEach((stop, index) => {
+        const d = distanceMeters(busLat, busLng, stop.lat, stop.lng);
+        if (d < nearestDistance) {
+          nearestDistance = d;
+          nearestIndex = index;
+        }
+      });
+
+      const currentStop = demoStops[nearestIndex];
+      const nextStop = demoStops[Math.min(nearestIndex + 1, demoStops.length - 1)];
+
+      const nextDistance = distanceMeters(busLat, busLng, nextStop.lat, nextStop.lng);
+      const fallbackSpeedKmh = speedMps * 3.6;
+      const safeSpeed = fallbackSpeedKmh && fallbackSpeedKmh > 5 ? fallbackSpeedKmh : 25;
+      const etaMinutes = Math.max(1, Math.round(nextDistance / ((safeSpeed * 1000) / 60)));
+
+      console.log("[DEMO PROGRESSION]", {
+        currentStop: currentStop?.name,
+        nextStop: nextStop?.name,
+        etaMinutes,
+        nearestIndex,
+        speed: safeSpeed,
+      });
+
+      return {
+        busId,
+        isSnapped: true,
+        distanceFromRoute: 0,
+        gpsConfidence,
+        gpsAccuracy: safeNumber(accuracy) || null,
+        tripId: normalizedRoute.tripId || null,
+        routeId: normalizedRoute.routeId || null,
+        currentStopIndex: nearestIndex,
+        currentStopId: currentStop?.stopId ?? null,
+        currentStopName: currentStop?.name ?? null,
+        nextStopIndex: nearestIndex + 1 < demoStops.length ? nearestIndex + 1 : -1,
+        nextStopId: nextStop?.stopId ?? null,
+        nextStopName: nextStop?.name ?? null,
+        passedStopIds: [],
+        remainingDistanceKm: 0,
+        remainingDistanceMeters: 0,
+        progressPercent: Math.round((nearestIndex / Math.max(demoStops.length - 1, 1)) * 100),
+        etaMinutes,
+        avgSpeedKmh: safeSpeed,
+        cumulativeDistance: 0,
+        totalRouteLength: 0,
+        lastProjectedPoint: { lat: busLat, lng: busLng },
+        lastUpdate: Date.now(),
+        jitterFiltered: false,
+        routeCoords: normalizedRoute.routeCoords
+      };
+    }
 
     // Get previous progression state
     const prevProgression = getBusProgression(busId);
