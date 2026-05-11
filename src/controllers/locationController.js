@@ -98,9 +98,6 @@ function clearBusFromStopArrivals(busId) {
 
 const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 const EMIT_DISTANCE_THRESHOLD_METERS = 15;
-const MIN_SPEED_KMPH = 10;
-const DEFAULT_SPEED_KMPH = 30;
-const MAX_SPEED_KMPH = 80;
 const MIN_SPEED_MPS = 5 / 3.6; // 5 km/h dead-zone filter (~1.39 m/s)
 const STOP_THRESHOLD_METERS = 15;
 const MIN_TIME_DIFF_SEC = 3;
@@ -1066,7 +1063,7 @@ async function getNearestStopHandler(req, res) {
     const enrichedBuses = buses
       .map((bus) => {
         const speed = Number(bus.speed) || 0;
-        const effectiveSpeed = speed > 10 ? speed : 25;
+        const effectiveSpeed = speed > 0 ? speed : 0;
         const routeKey = String(bus.routeId || "");
         const routeStops = routeKey ? stopsByRoute.get(routeKey) || [] : [];
         const routeSchedule = routeKey ? scheduleByRoute.get(routeKey) || new Map() : new Map();
