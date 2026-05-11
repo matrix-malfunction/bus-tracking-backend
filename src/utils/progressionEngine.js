@@ -7,7 +7,7 @@
 
 const routes = require("../../data/routes");
 const { DEMO_STOP_METADATA = {} } = routes;
-const { getBusProgression, setBusProgression, addSpeedSample, getRollingAverageSpeed } = require("./trackingState");
+const { getBusProgression, setBusProgression, addSpeedSample, getRollingAverageSpeed, getTrackingState } = require("./trackingState");
 const { getStopNameById, ALL_STOPS } = require("../services/overpassService");
 
 // Hysteresis thresholds
@@ -1236,8 +1236,16 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
         }
       });
 
-      const currentStop = demoStops[nearestIndex];
-      const nextStop = demoStops[Math.min(nearestIndex + 1, demoStops.length - 1)];
+      // MONOTONIC GUARD: once bus reaches stop N, do not move backward to N-1
+      const previousState = getTrackingState(busId);
+      const previousIndex = Number.isFinite(previousState?.routeProgressIndex)
+        ? previousState.routeProgressIndex
+        : -1;
+      const safeNearestIndex = Math.max(previousIndex, nearestIndex);
+
+      const currentStop = demoStops[safeNearestIndex];
+      const nextIndex = Math.min(safeNearestIndex + 1, demoStops.length - 1);
+      const nextStop = demoStops[nextIndex];
 
       const nextDistance = distanceMeters(busLat, busLng, nextStop.lat, nextStop.lng);
       const fallbackSpeedKmh = speedMps * 3.6;
@@ -1245,10 +1253,12 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       const etaMinutes = Math.max(1, Math.round(nextDistance / ((safeSpeed * 1000) / 60)));
 
       console.log("[DEMO PROGRESSION]", {
+        previousIndex,
+        nearestIndex,
+        safeNearestIndex,
         currentStop: currentStop?.name,
         nextStop: nextStop?.name,
         etaMinutes,
-        nearestIndex,
         speed: safeSpeed,
       });
 
@@ -1260,16 +1270,16 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
         gpsAccuracy: safeNumber(accuracy) || null,
         tripId: normalizedRoute.tripId || null,
         routeId: normalizedRoute.routeId || null,
-        currentStopIndex: nearestIndex,
+        currentStopIndex: safeNearestIndex,
         currentStopId: currentStop?.stopId ?? null,
         currentStopName: currentStop?.name ?? null,
-        nextStopIndex: nearestIndex + 1 < demoStops.length ? nearestIndex + 1 : -1,
+        nextStopIndex: nextIndex < demoStops.length ? nextIndex : -1,
         nextStopId: nextStop?.stopId ?? null,
         nextStopName: nextStop?.name ?? null,
         passedStopIds: [],
         remainingDistanceKm: 0,
         remainingDistanceMeters: 0,
-        progressPercent: Math.round((nearestIndex / Math.max(demoStops.length - 1, 1)) * 100),
+        progressPercent: Math.round((safeNearestIndex / Math.max(demoStops.length - 1, 1)) * 100),
         etaMinutes,
         avgSpeedKmh: safeSpeed,
         cumulativeDistance: 0,
