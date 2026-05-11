@@ -1291,10 +1291,19 @@ const startTracking = async (req, res) => {
       console.log("[ROUTE LOOKUP]", {
         requestedRouteId: routeId,
         found: !!route,
-        hasCoords: !!(route?.coordinates || route?.routeCoords),
-        coordsCount: (route?.coordinates || route?.routeCoords)?.length,
+        hasCoords: !!(route?.routeCoords || route?.coordinates),
+        coordsCount: (route?.routeCoords || route?.coordinates)?.length,
         hasStops: !!route?.stops,
         stopsCount: route?.stops?.length,
+      });
+      console.log("[ROUTE VERIFY]", {
+        routeId: route?.id,
+        keys: Object.keys(route || {}),
+        hasRouteCoords: !!route?.routeCoords,
+        coordsCount: route?.routeCoords?.length,
+        hasStops: !!route?.stops,
+        stopsCount: route?.stops?.length,
+        firstStopType: typeof (route?.stops?.[0]),
       });
       if (!route) {
         console.log("[BACKEND] ❌ Invalid routeId:", routeId);
@@ -1309,22 +1318,29 @@ const startTracking = async (req, res) => {
       }
       
       // DEMO-SAFE: Build direction-specific stop sequence and route corridor
-      const directionStops = direction === "OUTBOUND"
-        ? (route.stops || []) // OUTBOUND: stops as defined
-        : (route.returnStops || [...(route.stops || [])].reverse()); // INBOUND: returnStops or reverse outbound stops to match reversed polyline
+      // rawStops may be objects { stopId, name, lat, lng } (new schema) or string IDs (legacy schema)
+      const rawStops = direction === "OUTBOUND"
+        ? (route.stops || [])
+        : (route.returnStops || [...(route.stops || [])].reverse());
 
-      // Stop-position fallback: sparse coords derived from stop locations
+      // Normalize to string IDs for progression engine compatibility
+      const directionStops = rawStops.map(s =>
+        (s !== null && typeof s === 'object') ? s.stopId : s
+      );
+
+      // Stop-position fallback: prefer object lat/lng, then Overpass lookup
       const { ALL_STOPS } = require("../services/overpassService");
-      const stopPositionCoords = directionStops.map(stopId => {
-        const stop = ALL_STOPS.find(s => s.id === stopId);
-        return stop ? [stop.lat, stop.lng] : null;
+      const stopPositionCoords = rawStops.map(s => {
+        if (s !== null && typeof s === 'object') return [s.lat, s.lng];
+        const found = ALL_STOPS.find(x => x.id === s);
+        return found ? [found.lat, found.lng] : null;
       }).filter(Boolean);
 
-      // Dense polyline: use full route.coordinates for accurate projection + ETA
+      // Dense polyline: prefer routeCoords (new canonical schema) then coordinates (legacy schema)
       // INBOUND reverses the outbound polyline to match direction of travel
       const rawPolyline = direction === "INBOUND"
-        ? [...(route.returnCoordinates || route.coordinates || [])].reverse()
-        : (route.coordinates || []);
+        ? [...(route.returnCoordinates || route.routeCoords || route.coordinates || [])].reverse()
+        : (route.routeCoords || route.coordinates || []);
       const denseCoords = rawPolyline.length >= 2 ? rawPolyline : stopPositionCoords;
 
       if (!denseCoords?.length || denseCoords.length < 2) {
