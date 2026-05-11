@@ -239,7 +239,14 @@ async function _updateLocationUnsafe(req, res) {
     const accuracy = req.body.accuracy ?? req.body.coords?.accuracy ?? null;
     
     console.log("[BACKEND] Parsed values:", { busId, lat, lng, source });
-    
+
+    console.log("[LOCATION UPDATE RECEIVED]", {
+      busId,
+      lat,
+      lng,
+      timestamp: Date.now(),
+    });
+
     // === INPUT VALIDATION ===
     const missingFields = [];
     if (!busId) missingFields.push("busId");
@@ -404,6 +411,14 @@ async function _updateLocationUnsafe(req, res) {
         stopsLength: routeForProgression?.stops?.length || 0,
         firstStop: routeForProgression?.stops?.[0] || null,
         source: activeRouteInfo ? "activeRouteInfo" : (routeInfo ? "routeInfo" : "none")
+      });
+
+      console.log("[MOVEMENT DELTA]", {
+        busId,
+        previousLat: state?.location?.lat,
+        previousLng: state?.location?.lng,
+        currentLat: numLat,
+        currentLng: numLng,
       });
 
       // FLOW TELEMETRY STEP 5: Before computeBusProgression
