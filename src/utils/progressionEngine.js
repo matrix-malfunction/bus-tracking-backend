@@ -736,7 +736,7 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
   console.log("[CORRIDOR INPUT]", {
     point: { lat: busLat, lng: busLng },
     routePoints: routeCoordinates?.length,
-    threshold: 300,
+    threshold: 250,
   });
 
   // VALIDATE BUS LOCATION
@@ -801,9 +801,8 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     );
 
     console.log("[SEGMENT DISTANCE]", {
-      index: i,
-      distance: projection?.distance,
-      minDistance,
+      segmentIndex: i,
+      distanceMeters: projection?.distance,
     });
 
     if (projection.distance < minDistance) {
@@ -851,8 +850,7 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     const safeTotalRouteLength = safeNumber(cumulativeDistance) ?? 0;
     const safeMinDistance = safeNumber(minDistance) ?? Infinity;
 
-    // DEBUG SNAP THRESHOLD: 1000m (temporarily increased for geometry mismatch diagnosis)
-    const SNAP_THRESHOLD_METERS = 1000;
+    const SNAP_THRESHOLD_METERS = 250;
     console.log("[PROJECTION THRESHOLD]", SNAP_THRESHOLD_METERS);
 
     console.log("[THRESHOLD CHECK]", {
@@ -862,13 +860,13 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     });
 
     // Hard snap validation - reject if too far from corridor
-    // TEMP DEBUG: bypass rejection but log it
     if (safeMinDistance > SNAP_THRESHOLD_METERS) {
-      console.log("[DEBUG OVERRIDE]", {
-        minDistance: safeMinDistance,
+      console.log("[SNAP REJECTED]", {
+        minDistance: Math.round(safeMinDistance),
         threshold: SNAP_THRESHOLD_METERS,
+        busId,
       });
-      // TEMP DEBUG ONLY - do NOT return null
+      return null;
     }
 
     const result = {
@@ -1174,6 +1172,13 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     const speedKmh = speedMps * 3.6;
 
     // Project bus position onto route corridor
+    console.log("[PROJECTION CHECK]", {
+      busLat,
+      busLng,
+      routeCoordsCount: normalizedRoute.routeCoords?.length,
+      firstCoord: normalizedRoute.routeCoords?.[0],
+      lastCoord: normalizedRoute.routeCoords?.[normalizedRoute.routeCoords.length - 1],
+    });
     const projection = projectOntoRouteCorridor(busLat, busLng, normalizedRoute.routeCoords, busId);
 
     console.log("[PROJECTION RESULT]", {
@@ -1186,7 +1191,16 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
 
     if (!projection) {
       console.log("[PROGRESSION EARLY RETURN]", "PROJECTION_FAILED");
-      return null;
+      const fallbackStops = normalizedRoute.stops || [];
+      return {
+        ...createFallbackProgression(busId, gpsConfidence, accuracy),
+        currentStopName: fallbackStops[0] ? (getStopNameById(fallbackStops[0]) || null) : null,
+        nextStopName:    fallbackStops[1] ? (getStopNameById(fallbackStops[1]) || null) : null,
+        currentStopIndex: 0,
+        currentStopId:    fallbackStops[0] || null,
+        nextStopIndex:    fallbackStops.length > 1 ? 1 : -1,
+        nextStopId:       fallbackStops[1] || null,
+      };
     }
 
     // Diagnostic telemetry: confirm projection->stop mapping inputs are coherent
@@ -1277,6 +1291,8 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   // Build progression result
   const progression = {
     busId,
+    isSnapped: true,
+    distanceFromRoute: safeNumber(projection.distanceFromCorridor) ?? null,
     gpsConfidence,
     gpsAccuracy: safeNumber(accuracy) || null,
     effectiveThreshold: safeNumber(effectiveThreshold) || STOP_ARRIVAL_THRESHOLD_METERS,
