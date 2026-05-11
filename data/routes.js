@@ -1,4 +1,22 @@
-module.exports = [
+// ─────────────────────────────────────────────────────────────
+// CURATED DEMO STOP METADATA — VLR_11_DEMO
+// Single source of truth for the demo corridor.
+// progressionEngine.js merges this OVER Overpass data on conflict.
+// coordinates[i] === stops[i] for every index — must stay aligned.
+// ─────────────────────────────────────────────────────────────
+const DEMO_STOP_METADATA = {
+  katpadi_main:     { id: "katpadi_main",     name: "Katpadi Bus Stand (Main)",                lat: 12.9772, lng: 79.1368 },
+  katpadi_junction: { id: "katpadi_junction", name: "Katpadi Junction Bus Stop",               lat: 12.9711, lng: 79.1372 },
+  katpadi_chittoor: { id: "katpadi_chittoor", name: "Katpadi Junction \u2013 Chittoor Bus Stand", lat: 12.9663, lng: 79.1375 },
+  custom_stop_117:  { id: "custom_stop_117",  name: "Vellore Mofussil Bus Terminus",           lat: 12.9346, lng: 79.1384 },
+  custom_stop_116:  { id: "custom_stop_116",  name: "CMC Bus Stop",                            lat: 12.9245, lng: 79.1333 },
+  custom_stop_138:  { id: "custom_stop_138",  name: "Infantry Road Stop",                      lat: 12.9113, lng: 79.1305 },
+  custom_stop_140:  { id: "custom_stop_140",  name: "Vellore Cantonment Station",              lat: 12.9107, lng: 79.1276 },
+  custom_stop_134:  { id: "custom_stop_134",  name: "Vellore (Near Jail) Bus Stop",            lat: 12.8881, lng: 79.1221 },
+  bagayam:          { id: "bagayam",          name: "Bagayam Bus Stop",                        lat: 12.8801, lng: 79.1348 },
+};
+
+const routes = [
 
   // ─────────────────────────────────────────────
   // VELLORE DISTRICT ROUTES (most common first)
@@ -382,6 +400,47 @@ module.exports = [
       [13.1159, 80.1053],
       [13.1202, 80.1021]
     ]
+  },
+
+  // ─────────────────────────────────────────────────────────────
+  // DEMO ROUTE: VLR_11_DEMO
+  // Fully curated Katpadi ↔ Bagayam corridor.
+  // INVARIANT: coordinates[i] === stops[i] for every index.
+  // Reverse both arrays together for INBOUND — never one alone.
+  // ─────────────────────────────────────────────────────────────
+  {
+    id: "VLR_11_DEMO",
+    name: "Katpadi Railway Station \u2013 Bagayam (Demo)",
+    shortName: "KPD-BGM-D",
+    color: "#e11d48",
+    district: "Vellore",
+    type: "city",
+    direction: "both",
+    stops: [
+      "katpadi_main",      // [0] Katpadi Bus Stand (Main)          ← coordinates[0]
+      "katpadi_junction",  // [1] Katpadi Junction Bus Stop         ← coordinates[1]
+      "katpadi_chittoor",  // [2] Katpadi – Chittoor Bus Stand      ← coordinates[2]
+      "custom_stop_117",   // [3] Vellore Mofussil Bus Terminus     ← coordinates[3]
+      "custom_stop_116",   // [4] CMC Bus Stop                      ← coordinates[4]
+      "custom_stop_138",   // [5] Infantry Road Stop                ← coordinates[5]
+      "custom_stop_140",   // [6] Vellore Cantonment Station        ← coordinates[6]
+      "custom_stop_134",   // [7] Vellore (Near Jail) Bus Stop      ← coordinates[7]
+      "bagayam"            // [8] Bagayam Bus Stop                  ← coordinates[8]
+    ],
+    coordinates: [
+      [12.9772, 79.1368],  // [0] katpadi_main
+      [12.9711, 79.1372],  // [1] katpadi_junction
+      [12.9663, 79.1375],  // [2] katpadi_chittoor
+      [12.9346, 79.1384],  // [3] custom_stop_117
+      [12.9245, 79.1333],  // [4] custom_stop_116
+      [12.9113, 79.1305],  // [5] custom_stop_138
+      [12.9107, 79.1276],  // [6] custom_stop_140
+      [12.8881, 79.1221],  // [7] custom_stop_134
+      [12.8801, 79.1348]   // [8] bagayam
+    ]
   }
 
 ];
+
+module.exports = routes;
+module.exports.DEMO_STOP_METADATA = DEMO_STOP_METADATA;

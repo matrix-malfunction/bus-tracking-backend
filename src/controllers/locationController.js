@@ -1319,6 +1319,22 @@ const startTracking = async (req, res) => {
         source: rawPolyline.length >= 2 ? "dense_polyline" : "stop_positions",
       });
 
+      // Alignment check: coords and stops must be same length for index-based matching
+      console.log("[ROUTE HYDRATION CHECK]", {
+        direction,
+        routeCoordsCount: denseCoords.length,
+        stopsCount: directionStops.length,
+        aligned: denseCoords.length === directionStops.length,
+        firstCoord: denseCoords[0] || null,
+        firstStop: directionStops[0]
+          ? (getStopNameById(directionStops[0]) || directionStops[0])
+          : null,
+        lastCoord: denseCoords[denseCoords.length - 1] || null,
+        lastStop: directionStops[directionStops.length - 1]
+          ? (getStopNameById(directionStops[directionStops.length - 1]) || directionStops[directionStops.length - 1])
+          : null,
+      });
+
       console.log("[BACKEND] Route validated:", route.name, "-", direction, "Stops:", directionStops.length);
     }
     

@@ -6,6 +6,7 @@
  */
 
 const routes = require("../../data/routes");
+const { DEMO_STOP_METADATA = {} } = routes;
 const { getBusProgression, setBusProgression, addSpeedSample, getRollingAverageSpeed } = require("./trackingState");
 const { getStopNameById, ALL_STOPS } = require("../services/overpassService");
 
@@ -493,10 +494,12 @@ function getGpsConfidence(accuracy) {
   return "UNUSABLE";
 }
 
-// Build stop coordinate lookup map
-const STOP_COORDS_MAP = new Map(
-  ALL_STOPS.map(stop => [String(stop.id), { lat: stop.lat, lng: stop.lng }])
-);
+// Build stop coordinate lookup map.
+// Curated DEMO_STOP_METADATA is merged LAST so it wins on any ID conflict with Overpass data.
+const STOP_COORDS_MAP = new Map([
+  ...ALL_STOPS.map(stop => [String(stop.id), { lat: stop.lat, lng: stop.lng }]),
+  ...Object.entries(DEMO_STOP_METADATA).map(([id, s]) => [id, { lat: s.lat, lng: s.lng }]),
+]);
 
 /**
  * Get stop coordinates by ID
