@@ -551,6 +551,16 @@ async function _updateLocationUnsafe(req, res) {
           routePoints: safeRouteCoordinates.length,
         });
 
+        console.log("[PROGRESSION CALL START]", {
+          busId,
+          hasStops: !!normalizedStops.length,
+          stopsCount: normalizedStops.length,
+          firstStop: normalizedStops[0],
+          firstStopType: typeof normalizedStops[0],
+          hasRouteCoords: !!safeRouteCoordinates.length,
+          routeCoordsCount: safeRouteCoordinates.length,
+        });
+
         progression = computeBusProgression(
           busId,
           numLat,

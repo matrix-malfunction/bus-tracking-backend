@@ -1143,6 +1143,16 @@ function calculateETA(remainingDistanceKm, busId) {
  */
 function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy) {
   try {
+    console.log("[ENGINE ENTRY]", {
+      busId,
+      hasStops: !!route?.stops?.length,
+      stopsCount: route?.stops?.length,
+      firstStop: route?.stops?.[0],
+      firstStopType: typeof route?.stops?.[0],
+      hasRouteCoords: !!(route?.routeCoords?.length || route?.coordinates?.length),
+      routeCoordsCount: route?.routeCoords?.length || route?.coordinates?.length,
+    });
+
     // Validate inputs
     console.log("[PROGRESSION INPUT]", {
       busId,
@@ -1348,6 +1358,14 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     routeProgressIndex: stopProgress.currentStopIndex,
     isSnapped: progression.isSnapped,
     distanceFromRoute: projection?.distanceFromRoute,
+  });
+
+  console.log("[ENGINE FINAL RESULT]", {
+    currentStopName,
+    nextStopName,
+    routeProgressIndex: stopProgress.currentStopIndex,
+    isSnapped: progression.isSnapped,
+    distanceFromRoute: progression.distanceFromRoute,
   });
 
   // Progression computed successfully - minimal telemetry

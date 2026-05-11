@@ -1,4 +1,7 @@
 console.log("[SERVER] server.js started");
+console.log("=================================");
+console.log(" PROGRESSION BUILD ACTIVE v2 ");
+console.log("=================================");
 
 const http = require("http");
 const { Server } = require("socket.io");
