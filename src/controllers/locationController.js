@@ -1078,14 +1078,28 @@ const startTracking = async (req, res) => {
         return res.status(400).json({ error: "Invalid direction. Must be OUTBOUND or INBOUND" });
       }
       
+      // DEMO-SAFE: Build direction-specific stop sequence and route corridor
+      const directionStops = direction === "OUTBOUND"
+        ? (route.stops || []) // OUTBOUND uses stops array
+        : (route.returnStops || route.stops || []); // INBOUND uses returnStops or falls back to stops
+
+      // Build route corridor coordinates from ordered stops
+      const { ALL_STOPS } = require("../services/overpassService");
+      const routeCoords = directionStops.map(stopId => {
+        const stop = ALL_STOPS.find(s => s.id === stopId);
+        return stop ? [stop.lat, stop.lng] : null;
+      }).filter(Boolean);
+
       routeData = {
         routeId: route.id,
-        routeName: routeName || route.name,  // Use request body value or fallback to route file
-        routeColor: routeColor || route.color,  // Use request body value or fallback to route file
-        direction: direction
+        routeName: routeName || route.name,
+        routeColor: routeColor || route.color,
+        direction: direction,
+        stops: directionStops, // Direction-specific stop IDs
+        routeCoords: routeCoords // Coordinates for progression
       };
-      
-      console.log("[BACKEND] Route validated:", route.name, "-", direction);
+
+      console.log("[BACKEND] Route validated:", route.name, "-", direction, "Stops:", directionStops.length);
     }
     
     console.log("[BACKEND] Initializing tracking state for:", busId);

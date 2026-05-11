@@ -290,7 +290,7 @@ const generateTripId = () => {
 /**
  * Set route assignment for a bus
  * @param {string} busId - Bus identifier
- * @param {object} routeData - { routeId, routeName, routeColor, direction }
+ * @param {object} routeData - { routeId, routeName, routeColor, direction, stops, routeCoords }
  * @returns {object} - Updated state with tripId
  */
 const setBusRoute = (busId, routeData) => {
@@ -303,7 +303,11 @@ const setBusRoute = (busId, routeData) => {
   }
 
   const tripId = generateTripId();
-  
+
+  // DEMO-SAFE: Store direction-specific stops and route corridor
+  const directionStops = routeData.stops || [];
+  const routeCoords = routeData.routeCoords || [];
+
   const nextState = {
     ...prevState,
     routeId: routeData.routeId,
@@ -311,13 +315,15 @@ const setBusRoute = (busId, routeData) => {
     routeColor: routeData.routeColor,
     direction: routeData.direction,
     tripId: tripId,
-    currentStopIndex: 0, // Future-ready for stop progression
+    stops: directionStops, // Direction-specific stop sequence
+    routeCoords: routeCoords, // Route corridor for progression
+    currentStopIndex: -1, // Start at -1, will find nearest on first GPS
     lastUpdate: Date.now(),
   };
-  
+
   trackingState.set(busId, nextState);
-  console.log(`[TRACKING STATE] Bus ${busId}: Route assigned - ${routeData.routeName} (${routeData.direction}), Trip: ${tripId}`);
-  
+  console.log(`[TRACKING STATE] Bus ${busId}: Route assigned - ${routeData.routeName} (${routeData.direction}), Stops: ${directionStops.length}, Trip: ${tripId}`);
+
   return { ...nextState, tripId };
 };
 
