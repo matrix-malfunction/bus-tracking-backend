@@ -517,12 +517,16 @@ async function _updateLocationUnsafe(req, res) {
       console.log("[FLOW] STEP 5 - Before computeBusProgression");
 
       const safeRouteCoordinates = routeForProgression?.routeCoords || [];
-      const normalizedStops = (routeForProgression?.stops || []).map((s) =>
-        typeof s === "string"
-          ? s
-          : s?.stopId
-      ).filter(Boolean);
+      // Preserve full stop objects so the engine uses embedded lat/lng/name directly.
+      // String IDs (legacy routes) are kept as-is; engine handles both formats.
+      const normalizedStops = (routeForProgression?.stops || []).filter(Boolean);
       const safeStops = normalizedStops;
+      console.log("[STOPS FOR PROGRESSION]", {
+        busId,
+        count: normalizedStops.length,
+        firstStopType: typeof normalizedStops[0],
+        firstStop: normalizedStops[0],
+      });
 
       if (!safeRouteCoordinates.length || safeRouteCoordinates.length < 2) {
         console.log("[PROGRESSION BLOCKED] Invalid route coordinates", {
@@ -567,8 +571,10 @@ async function _updateLocationUnsafe(req, res) {
           busId,
           currentStopName: progression?.currentStopName,
           nextStopName: progression?.nextStopName,
-          nextStopEtaMinutes: progression?.etaMinutes,
           routeProgressIndex: progression?.currentStopIndex,
+          isSnapped: progression?.isSnapped,
+          distanceFromRoute: progression?.distanceFromRoute,
+          nextStopEtaMinutes: progression?.etaMinutes,
         });
 
         if (!progression?.lastProjectedPoint) {
@@ -783,10 +789,11 @@ async function _updateLocationUnsafe(req, res) {
           nextStopName: safePayload.nextStopName,
         });
 
-        console.log("[SOCKET PROGRESSION VERIFY]", {
+        console.log("[SOCKET FINAL VERIFY]", {
           currentStopName: safePayload.currentStopName,
           nextStopName: safePayload.nextStopName,
           routeProgressIndex: safePayload.routeProgressIndex,
+          isSnapped: safePayload.isSnapped,
         });
 
         io.emit("BUS_LOCATION_UPDATE", safePayload);
@@ -889,6 +896,12 @@ async function _updateLocationUnsafe(req, res) {
       routeProgressIndex: updatedTrackingState?.routeProgressIndex,
       currentStopName: updatedTrackingState?.currentStopName,
       nextStopName: updatedTrackingState?.nextStopName,
+    });
+    console.log("[TRACKING STATE FINAL]", {
+      currentStopName: updatedTrackingState?.currentStopName,
+      nextStopName: updatedTrackingState?.nextStopName,
+      routeProgressIndex: updatedTrackingState?.routeProgressIndex,
+      isSnapped: updatedTrackingState?.isSnapped,
     });
     
     // FLOW TELEMETRY STEP 8: Response sent
@@ -1367,7 +1380,7 @@ const startTracking = async (req, res) => {
         routeName: routeName || route.name,
         routeColor: routeColor || route.color,
         direction: direction,
-        stops: directionStops,
+        stops: rawStops,       // Keep full objects { stopId, name, lat, lng } so engine can resolve coords/names without STOP_COORDS_MAP lookup
         routeCoords: denseCoords
       };
 
