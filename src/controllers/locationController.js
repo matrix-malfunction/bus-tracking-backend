@@ -770,6 +770,14 @@ async function _updateLocationUnsafe(req, res) {
           tripId: safePayload.tripId,
         });
 
+        console.log("[SOCKET PAYLOAD VERIFY]", {
+          busId,
+          hasRouteCoords: !!safePayload.routeCoords,
+          coordsCount: safePayload.routeCoords?.length,
+          currentStopName: safePayload.currentStopName,
+          nextStopName: safePayload.nextStopName,
+        });
+
         io.emit("BUS_LOCATION_UPDATE", safePayload);
         console.log("[BACKEND] ✅ Socket event emitted");
         
@@ -859,6 +867,18 @@ async function _updateLocationUnsafe(req, res) {
       }),
     });
     console.log("[BACKEND] ✅ State updated (MERGED):", busId, "speed:", Math.round(speed), "km/h", "route:", existingBus.routeId || "none");
+
+    const updatedTrackingState = trackingState.get(busId);
+    console.log("[TRACKING STATE VERIFY]", {
+      busId,
+      hasRouteCoords: !!updatedTrackingState?.routeCoords,
+      coordsCount: updatedTrackingState?.routeCoords?.length,
+      hasStops: !!updatedTrackingState?.stops,
+      stopsCount: updatedTrackingState?.stops?.length,
+      routeProgressIndex: updatedTrackingState?.routeProgressIndex,
+      currentStopName: updatedTrackingState?.currentStopName,
+      nextStopName: updatedTrackingState?.nextStopName,
+    });
     
     // FLOW TELEMETRY STEP 8: Response sent
     console.log("[FLOW] STEP 8 - Response sent");
@@ -1268,6 +1288,14 @@ const startTracking = async (req, res) => {
     
     if (routeId) {
       const route = routes.find(r => r.id === routeId);
+      console.log("[ROUTE LOOKUP]", {
+        requestedRouteId: routeId,
+        found: !!route,
+        hasCoords: !!(route?.coordinates || route?.routeCoords),
+        coordsCount: (route?.coordinates || route?.routeCoords)?.length,
+        hasStops: !!route?.stops,
+        stopsCount: route?.stops?.length,
+      });
       if (!route) {
         console.log("[BACKEND] ❌ Invalid routeId:", routeId);
         return res.status(400).json({ error: "Invalid routeId" });
@@ -1298,6 +1326,14 @@ const startTracking = async (req, res) => {
         ? [...(route.returnCoordinates || route.coordinates || [])].reverse()
         : (route.coordinates || []);
       const denseCoords = rawPolyline.length >= 2 ? rawPolyline : stopPositionCoords;
+
+      if (!denseCoords?.length || denseCoords.length < 2) {
+        console.error("[TRACKING START] Missing routeCoords", { routeId });
+        return res.status(400).json({
+          success: false,
+          message: "Route missing routeCoords",
+        });
+      }
 
       routeData = {
         routeId: route.id,
@@ -1345,6 +1381,30 @@ const startTracking = async (req, res) => {
     if (routeData) {
       assignedRoute = setBusRoute(busId, routeData);
       console.log("[BACKEND] Route assigned:", assignedRoute.tripId);
+
+      // Fix 1: Explicitly consolidate routeCoords + stops into trackingState
+      // Defensive merge — survives any intermediate state wipe between setTrackingActive and here
+      const consolidatedBase = trackingState.get(busId) || {};
+      trackingState.set(busId, {
+        ...consolidatedBase,
+        routeCoords: routeData.routeCoords,
+        stops: routeData.stops,
+        passedStopIds: consolidatedBase.passedStopIds || [],
+        routeProgressIndex: 0,
+        lastUpdate: Date.now(),
+      });
+
+      const postHydration = trackingState.get(busId);
+      console.log("[TRACKING STATE VERIFY]", {
+        busId,
+        hasRouteCoords: !!postHydration?.routeCoords,
+        coordsCount: postHydration?.routeCoords?.length,
+        hasStops: !!postHydration?.stops,
+        stopsCount: postHydration?.stops?.length,
+        routeProgressIndex: postHydration?.routeProgressIndex,
+        currentStopName: postHydration?.currentStopName,
+        nextStopName: postHydration?.nextStopName,
+      });
     }
     
     // Verify tracking state storage
@@ -1376,7 +1436,9 @@ const startTracking = async (req, res) => {
             routeName: assignedRoute.routeName,
             routeColor: assignedRoute.routeColor,
             direction: assignedRoute.direction,
-            tripId: assignedRoute.tripId
+            tripId: assignedRoute.tripId,
+            routeCoords: routeData?.routeCoords || [],
+            stops: routeData?.stops || []
           })
         };
         console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE on start:", emitPayload);
