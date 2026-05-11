@@ -1000,7 +1000,18 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
     );
     return { index, stopId: stop.id, distance };
   });
-  
+
+  // Diagnostic telemetry: per-stop distance to projected point with resolved names
+  console.log("[STOP DISTANCES]", {
+    busId,
+    stops: stopDistances.map((s) => ({
+      stopIndex: s.index,
+      stopName: getStopNameById(s.stopId),
+      stopId: s.stopId,
+      distanceToProjection: Math.round(s.distance),
+    })),
+  });
+
   // Find nearest stop
   const nearest = stopDistances.reduce((best, current) => 
     current.distance < best.distance ? current : best
@@ -1174,6 +1185,21 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       console.log("[PROGRESSION EARLY RETURN]", "PROJECTION_FAILED");
       return null;
     }
+
+    // Diagnostic telemetry: confirm projection->stop mapping inputs are coherent
+    console.log("[PROGRESSION DEBUG]", {
+      busId,
+      projectedPoint: projection.projectedPoint,
+      nearestSegmentIndex: projection.segmentIndex,
+      routePoints: normalizedRouteCoords.length,
+      stopCount: normalizedRoute.stops?.length || 0,
+      firstStop: normalizedRoute.stops?.[0]
+        ? getStopNameById(normalizedRoute.stops[0])
+        : null,
+      lastStop: normalizedRoute.stops?.length
+        ? getStopNameById(normalizedRoute.stops[normalizedRoute.stops.length - 1])
+        : null,
+    });
 
     // JITTER FILTERING: Skip if movement is below threshold
     let jitterFiltered = false;

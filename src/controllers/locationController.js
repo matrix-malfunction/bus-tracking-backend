@@ -1282,8 +1282,8 @@ const startTracking = async (req, res) => {
       
       // DEMO-SAFE: Build direction-specific stop sequence and route corridor
       const directionStops = direction === "OUTBOUND"
-        ? (route.stops || []) // OUTBOUND uses stops array
-        : (route.returnStops || route.stops || []); // INBOUND uses returnStops or falls back to stops
+        ? (route.stops || []) // OUTBOUND: stops as defined
+        : (route.returnStops || [...(route.stops || [])].reverse()); // INBOUND: returnStops or reverse outbound stops to match reversed polyline
 
       // Stop-position fallback: sparse coords derived from stop locations
       const { ALL_STOPS } = require("../services/overpassService");
