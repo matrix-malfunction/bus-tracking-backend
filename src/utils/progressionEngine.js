@@ -264,8 +264,8 @@ function computeEta(busId, nextStopId, remainingDistanceMeters, currentSpeedKmh)
     effectiveSpeed = state.rollingSpeedKmh; // Use last known rolling speed
   }
   
-  // Rolling average: 70% old + 30% new
-  state.rollingSpeedKmh = (state.rollingSpeedKmh * 0.7) + (effectiveSpeed * 0.3);
+  // Rolling average: 80% old + 20% new (smoother ETA)
+  state.rollingSpeedKmh = (state.rollingSpeedKmh * 0.8) + (effectiveSpeed * 0.2);
   
   // Minimum speed for ETA calculation (avoid infinite ETA when stopped)
   const minSpeedForEta = 5; // 5 km/h minimum
