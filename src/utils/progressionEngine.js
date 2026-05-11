@@ -730,20 +730,28 @@ function projectPointOntoSegment(point, segmentStart, segmentEnd) {
  * Returns: { projectedPoint, cumulativeDistance, segmentIndex, distanceFromCorridor }
  */
 function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unknown") {
+  console.log("[CORRIDOR INPUT]", {
+    point: { lat: busLat, lng: busLng },
+    routePoints: routeCoordinates?.length,
+    threshold: 300,
+  });
+
   // VALIDATE BUS LOCATION
   if (!Number.isFinite(busLat) || !Number.isFinite(busLng)) {
-    console.error("[PROJECTION] INVALID BUS LOCATION", { busLat, busLng });
+    console.error("[CORRIDOR FAILED]", "INVALID_BUS_LOCATION", { busLat, busLng });
     return null;
   }
 
   // HARD NORMALIZE route coordinates
   const normalizedRoute = routeCoordinates.map((c, i) => normalizeCoord(c, i)).filter(Boolean);
 
+  console.log("[NORMALIZED ROUTE SAMPLE]", normalizedRoute.slice(0, 5));
+
   // ROUTE VALIDATION with telemetry (keep for mismatch detection)
   const originalCount = routeCoordinates?.length || 0;
   const normalizedCount = normalizedRoute.length;
   if (normalizedCount < 2) {
-    console.error("[PROJECTION] INVALID ROUTE", { originalCount, normalizedCount });
+    console.error("[CORRIDOR FAILED]", "NO_ROUTE_POINTS", { originalCount, normalizedCount });
     return null;
   }
   if (normalizedCount !== originalCount) {
@@ -761,7 +769,25 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     const start = normalizedRoute[i];
     const end = normalizedRoute[i + 1];
 
+    console.log("[SEGMENT CHECK]", {
+      index: i,
+      start,
+      end,
+    });
+
     if (!start || !end) {
+      console.log("[CORRIDOR FAILED]", "INVALID_COORDINATES", { start, end, index: i });
+      continue;
+    }
+
+    // Hard validate segment coordinates before geometry math
+    if (
+      Number.isNaN(start.lat) ||
+      Number.isNaN(start.lng) ||
+      Number.isNaN(end.lat) ||
+      Number.isNaN(end.lng)
+    ) {
+      console.log("[INVALID ROUTE SEGMENT]", { start, end, index: i });
       continue;
     }
 
@@ -770,6 +796,12 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
       start,
       end
     );
+
+    console.log("[SEGMENT DISTANCE]", {
+      index: i,
+      distance: projection?.distance,
+      minDistance,
+    });
 
     if (projection.distance < minDistance) {
       minDistance = projection.distance;
@@ -786,16 +818,23 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     cumulativeDistance += segmentLength;
   }
 
+  console.log("[BEST PROJECTION]", {
+    minDistance,
+    bestSegmentIndex,
+    snappedLat: bestProjection?.point?.lat,
+    snappedLng: bestProjection?.point?.lng,
+  });
+
   // Log only when no projection found (critical failure)
   if (!bestProjection?.point) {
-    console.warn("[PROJECTION] No valid segment found", { busId, minDistance: Math.round(minDistance) });
+    console.warn("[CORRIDOR FAILED]", "NO_VALID_SEGMENT", { busId, minDistance: Math.round(minDistance) });
   }
 
   // Calculate precise cumulative distance to projected point
   if (bestProjection && bestProjection.point) {
     const segmentStart = normalizedRoute[bestSegmentIndex];
     if (!segmentStart || !bestProjection.point) {
-      console.error("[PROJECTION] Segment invalid", { busId, bestSegmentIndex });
+      console.error("[CORRIDOR FAILED]", "INVALID_SEGMENT", { busId, bestSegmentIndex });
       return null;
     }
     const projectedPoint = bestProjection.point;
@@ -813,14 +852,20 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     const SNAP_THRESHOLD_METERS = 300;
     console.log("[PROJECTION THRESHOLD]", SNAP_THRESHOLD_METERS);
 
+    console.log("[THRESHOLD CHECK]", {
+      minDistance: safeMinDistance,
+      threshold: SNAP_THRESHOLD_METERS,
+      passes: safeMinDistance <= SNAP_THRESHOLD_METERS,
+    });
+
     // Hard snap validation - reject if too far from corridor
+    // TEMP DEBUG: bypass rejection but log it
     if (safeMinDistance > SNAP_THRESHOLD_METERS) {
-      console.warn("[PROJECTION] Snap rejected", {
-        busId,
-        minDistance: Math.round(safeMinDistance),
+      console.log("[DEBUG OVERRIDE]", {
+        minDistance: safeMinDistance,
         threshold: SNAP_THRESHOLD_METERS,
       });
-      return null;
+      // TEMP DEBUG ONLY - do NOT return null
     }
 
     const result = {
@@ -828,10 +873,17 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
       snappedLat: projectedPoint.lat,
       snappedLng: projectedPoint.lng,
       cumulativeDistance: safeCumulativeDistance,
-      segmentIndex: bestSegmentIndex ?? 0,  // Fix: index 0 should not become null
-      distanceFromCorridor: safeMinDistance ?? null,  // Fix: use nullish coalescing
+      segmentIndex: bestSegmentIndex ?? 0,
+      distanceFromCorridor: safeMinDistance ?? null,
       totalRouteLength: safeTotalRouteLength
     };
+
+    console.log("[CORRIDOR SUCCESS]", {
+      snappedLat: result.snappedLat,
+      snappedLng: result.snappedLng,
+      minDistance: safeMinDistance,
+      bestSegmentIndex,
+    });
 
     // Projection success - minimal telemetry
     if (result.distanceFromCorridor > 50) {
@@ -844,6 +896,7 @@ function projectOntoRouteCorridor(busLat, busLng, routeCoordinates, busId = "unk
     return result;
   }
 
+  console.error("[CORRIDOR FAILED]", "NO_PROJECTION", { busId });
   return null;
 }
 
