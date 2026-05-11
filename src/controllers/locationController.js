@@ -754,6 +754,9 @@ async function _updateLocationUnsafe(req, res) {
             remainingDistanceKm: sanitizeNumber(progression.remainingDistanceKm) ?? null,
             progressPercent: sanitizeNumber(progression.progressPercent) ?? 0,
             avgSpeedKmh: sanitizeNumber(progression.avgSpeedKmh) ?? 0,
+            derivedSpeed: sanitizeNumber(progression.derivedSpeed) || 0,
+            occupancy: Number.isFinite(progression.occupancy) ? progression.occupancy : null,
+            capacity: Number.isFinite(progression.capacity) ? progression.capacity : null,
             gpsConfidence: progression.gpsConfidence || "UNKNOWN",
             gpsAccuracy: sanitizeNumber(progression.gpsAccuracy) ?? null
           })
