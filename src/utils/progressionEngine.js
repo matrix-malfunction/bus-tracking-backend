@@ -360,7 +360,7 @@ function updateStopEventState(busId, progression, distanceToStop, effectiveArriv
       emitStopEvent('DEPARTED', {
         busId,
         stopId: state.currentStopId,
-        stopName: getStopNameById(state.currentStopId),
+        stopName: getSafeStopName({ stopId: state.currentStopId }),
         dwellSeconds,
         departedAt: now
       });
@@ -388,7 +388,7 @@ function updateStopEventState(busId, progression, distanceToStop, effectiveArriv
     emitStopEvent('DEPARTED', {
       busId,
       stopId: state.currentStopId,
-      stopName: getStopNameById(state.currentStopId),
+      stopName: getSafeStopName({ stopId: state.currentStopId }),
       dwellSeconds,
       departedAt: now,
       nextStopId: currentStopId
@@ -412,7 +412,7 @@ function updateStopEventState(busId, progression, distanceToStop, effectiveArriv
       emitStopEvent('ARRIVED', {
         busId,
         stopId: currentStopId,
-        stopName: getStopNameById(currentStopId),
+        stopName: getSafeStopName({ stopId: currentStopId }),
         distance: Math.round(distanceToStop),
         threshold: effectiveArrivalThreshold,
         arrivedAt: now
@@ -433,7 +433,7 @@ function updateStopEventState(busId, progression, distanceToStop, effectiveArriv
         emitStopEvent('DWELLING', {
           busId,
           stopId: currentStopId,
-          stopName: getStopNameById(currentStopId),
+          stopName: getSafeStopName({ stopId: currentStopId }),
           dwellSeconds,
           updatedAt: now
         });
@@ -453,7 +453,7 @@ function updateStopEventState(busId, progression, distanceToStop, effectiveArriv
       emitStopEvent('DEPARTED', {
         busId,
         stopId: currentStopId,
-        stopName: getStopNameById(currentStopId),
+        stopName: getSafeStopName({ stopId: currentStopId }),
         dwellSeconds,
         distance: Math.round(distanceToStop),
         departedAt: now
@@ -474,7 +474,7 @@ function updateStopEventState(busId, progression, distanceToStop, effectiveArriv
       emitStopEvent('APPROACHING', {
         busId,
         stopId: currentStopId,
-        stopName: getStopNameById(currentStopId),
+        stopName: getSafeStopName({ stopId: currentStopId }),
         distance: Math.round(distanceToStop),
         threshold: effectiveArrivalThreshold
       });
@@ -509,6 +509,17 @@ const STOP_COORDS_MAP = new Map([
 function getStopCoordsById(stopId) {
   if (!stopId) return null;
   return STOP_COORDS_MAP.get(String(stopId)) || null;
+}
+
+function getSafeStopId(stop) {
+  return typeof stop === "string"
+    ? stop
+    : (stop?.stopId || stop?.id || stop?._id || null);
+}
+
+function getSafeStopName(stop) {
+  const safeStopId = getSafeStopId(stop);
+  return getStopNameById(safeStopId) || DEMO_STOP_METADATA[safeStopId]?.name || stop?.name || "Unknown Stop";
 }
 
 /**
@@ -945,6 +956,11 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
   
   // RAW ROUTE STOPS TELEMETRY
   console.log("[RAW ROUTE STOPS]", routeStops?.slice(0, 3));
+  console.log("[STOP RESOLUTION]", {
+    stopsCount: routeStops?.length,
+    firstStop: routeStops?.[0],
+    firstStopType: typeof routeStops?.[0],
+  });
   
   // Validate route stops
   if (!routeStops || !Array.isArray(routeStops) || routeStops.length === 0) {
@@ -955,15 +971,18 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
   // Universal stop normalization - handles both string IDs and object stops
   const normalizedStops = (routeStops || [])
     .map(stop => {
+      const safeStopId = getSafeStopId(stop);
+      if (!safeStopId) return null;
+
       if (typeof stop === "string") {
-        const coords = getStopCoordsById(stop);
-        return coords ? { id: stop, ...coords } : null;
+        const coords = getStopCoordsById(safeStopId);
+        return coords ? { id: safeStopId, name: getSafeStopName(stop), ...coords } : null;
       }
       
       // Object stop - extract ID and coordinates
       return {
-        id: stop.id,
-        name: stop.name,
+        id: safeStopId,
+        name: getSafeStopName(stop),
         lat: stop.lat ?? stop.latitude,
         lng: stop.lng ?? stop.longitude
       };
@@ -1007,7 +1026,7 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
     busId,
     stops: stopDistances.map((s) => ({
       stopIndex: s.index,
-      stopName: getStopNameById(s.stopId),
+      stopName: getSafeStopName({ stopId: s.stopId }),
       stopId: s.stopId,
       distanceToProjection: Math.round(s.distance),
     })),
@@ -1194,12 +1213,12 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       const fallbackStops = normalizedRoute.stops || [];
       return {
         ...createFallbackProgression(busId, gpsConfidence, accuracy),
-        currentStopName: fallbackStops[0] ? (getStopNameById(fallbackStops[0]) || null) : null,
-        nextStopName:    fallbackStops[1] ? (getStopNameById(fallbackStops[1]) || null) : null,
+        currentStopName: fallbackStops[0] ? getSafeStopName(fallbackStops[0]) : null,
+        nextStopName:    fallbackStops[1] ? getSafeStopName(fallbackStops[1]) : null,
         currentStopIndex: 0,
-        currentStopId:    fallbackStops[0] || null,
+        currentStopId:    fallbackStops[0] ? getSafeStopId(fallbackStops[0]) : null,
         nextStopIndex:    fallbackStops.length > 1 ? 1 : -1,
-        nextStopId:       fallbackStops[1] || null,
+        nextStopId:       fallbackStops[1] ? getSafeStopId(fallbackStops[1]) : null,
       };
     }
 
@@ -1211,10 +1230,10 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       routePoints: normalizedRouteCoords.length,
       stopCount: normalizedRoute.stops?.length || 0,
       firstStop: normalizedRoute.stops?.[0]
-        ? getStopNameById(normalizedRoute.stops[0])
+        ? getSafeStopName(normalizedRoute.stops[0])
         : null,
       lastStop: normalizedRoute.stops?.length
-        ? getStopNameById(normalizedRoute.stops[normalizedRoute.stops.length - 1])
+        ? getSafeStopName(normalizedRoute.stops[normalizedRoute.stops.length - 1])
         : null,
     });
 
@@ -1251,10 +1270,12 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     const { effectiveArrivalThreshold, effectiveHysteresis } = stopProgress;
   
   // Get stop names for display
-  const currentStopId = stopProgress.currentStopIndex >= 0 ? normalizedRoute.stops[stopProgress.currentStopIndex] : null;
-  const nextStopId = stopProgress.nextStopIndex >= 0 ? normalizedRoute.stops[stopProgress.nextStopIndex] : null;
-  const currentStopName = currentStopId ? getStopNameById(currentStopId) : null;
-  const nextStopName = nextStopId ? getStopNameById(nextStopId) : null;
+  const currentStop = stopProgress.currentStopIndex >= 0 ? normalizedRoute.stops[stopProgress.currentStopIndex] : null;
+  const nextStop = stopProgress.nextStopIndex >= 0 ? normalizedRoute.stops[stopProgress.nextStopIndex] : null;
+  const currentStopId = currentStop ? getSafeStopId(currentStop) : null;
+  const nextStopId = nextStop ? getSafeStopId(nextStop) : null;
+  const currentStopName = currentStop ? getSafeStopName(currentStop) : null;
+  const nextStopName = nextStop ? getSafeStopName(nextStop) : null;
 
   // Calculate remaining distance along corridor
   const remainingDistanceKm = (projection.totalRouteLength - projection.cumulativeDistance) / 1000;
@@ -1319,11 +1340,13 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   };
   
   console.log("[FINAL PROGRESSION]", {
+    currentStopId,
+    nextStopId,
     currentStopName,
     nextStopName,
     nextStopEtaMinutes: etaMinutes,
     routeProgressIndex: stopProgress.currentStopIndex,
-    isSnapped: !!projection,
+    isSnapped: progression.isSnapped,
     distanceFromRoute: projection?.distanceFromRoute,
   });
 

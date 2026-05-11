@@ -517,7 +517,12 @@ async function _updateLocationUnsafe(req, res) {
       console.log("[FLOW] STEP 5 - Before computeBusProgression");
 
       const safeRouteCoordinates = routeForProgression?.routeCoords || [];
-      const safeStops = routeForProgression?.stops || [];
+      const normalizedStops = (routeForProgression?.stops || []).map((s) =>
+        typeof s === "string"
+          ? s
+          : s?.stopId
+      ).filter(Boolean);
+      const safeStops = normalizedStops;
 
       if (!safeRouteCoordinates.length || safeRouteCoordinates.length < 2) {
         console.log("[PROGRESSION BLOCKED] Invalid route coordinates", {
@@ -547,7 +552,7 @@ async function _updateLocationUnsafe(req, res) {
           numLat,
           numLng,
           speed,
-          { ...routeForProgression, routeCoords: safeRouteCoordinates, stops: safeStops },
+          { ...routeForProgression, routeCoords: safeRouteCoordinates, stops: normalizedStops },
           accuracy
         );
 
@@ -776,6 +781,12 @@ async function _updateLocationUnsafe(req, res) {
           coordsCount: safePayload.routeCoords?.length,
           currentStopName: safePayload.currentStopName,
           nextStopName: safePayload.nextStopName,
+        });
+
+        console.log("[SOCKET PROGRESSION VERIFY]", {
+          currentStopName: safePayload.currentStopName,
+          nextStopName: safePayload.nextStopName,
+          routeProgressIndex: safePayload.routeProgressIndex,
         });
 
         io.emit("BUS_LOCATION_UPDATE", safePayload);
