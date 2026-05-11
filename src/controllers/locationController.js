@@ -614,6 +614,12 @@ async function _updateLocationUnsafe(req, res) {
           etaMinutes: safePayload.nextStopEtaMinutes
         });
 
+        console.log("[SPEED EMIT]", {
+          busId,
+          derivedSpeed: safePayload.derivedSpeed,
+          speed: safePayload.speed,
+        });
+
         console.log("[EMIT PAYLOAD]", {
           busId,
           currentStopName: safePayload.currentStopName,
