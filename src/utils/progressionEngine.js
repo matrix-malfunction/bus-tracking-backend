@@ -18,6 +18,7 @@ const MIN_SPEED_KMH = 5; // Minimum operational speed for ETA calculation
 // STOP ARRIVAL DETECTION thresholds
 const STOP_ARRIVAL_THRESHOLD_METERS = 40; // Bus must be within 40m to be "at" stop
 const STOP_ADVANCE_HYSTERESIS_METERS = 60; // Must advance 60m past stop to move to next
+const ARRIVAL_THRESHOLD_METERS = 60; // Demo fallback: only advance stop index when within 60m of target stop
 const MAX_USABLE_ACCURACY_METERS = 80; // Maximum GPS accuracy we can use for progression
 
 // ROUTE SNAPPING thresholds
@@ -1236,12 +1237,25 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
         }
       });
 
-      // MONOTONIC GUARD: once bus reaches stop N, do not move backward to N-1
+      // MONOTONIC GUARD + ARRIVAL THRESHOLD: once bus reaches stop N, do not move backward to N-1,
+      // and only advance to N+1 when within 60m of the target stop
       const previousState = getTrackingState(busId);
       const previousIndex = Number.isFinite(previousState?.routeProgressIndex)
         ? previousState.routeProgressIndex
         : -1;
-      const safeNearestIndex = Math.max(previousIndex, nearestIndex);
+
+      let safeNearestIndex;
+      let shouldAdvance = false;
+      let distanceToNextStop = null;
+      if (previousIndex === -1) {
+        safeNearestIndex = nearestIndex;
+      } else if (nearestIndex <= previousIndex) {
+        safeNearestIndex = previousIndex;
+      } else {
+        distanceToNextStop = distanceMeters(busLat, busLng, demoStops[nearestIndex].lat, demoStops[nearestIndex].lng);
+        shouldAdvance = distanceToNextStop <= ARRIVAL_THRESHOLD_METERS;
+        safeNearestIndex = shouldAdvance ? nearestIndex : previousIndex;
+      }
 
       const currentStop = demoStops[safeNearestIndex];
       const nextIndex = Math.min(safeNearestIndex + 1, demoStops.length - 1);
@@ -1252,13 +1266,30 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       const safeSpeed = fallbackSpeedKmh && fallbackSpeedKmh > 5 ? fallbackSpeedKmh : 25;
       const etaMinutes = Math.max(1, Math.round(nextDistance / ((safeSpeed * 1000) / 60)));
 
+      // Dynamic route-based progressPercent (prevents freeze at ~88% from stop-index approach)
+      let routeProgressIndex = 0;
+      let minRouteDist = Infinity;
+      normalizedRouteCoords.forEach((coord, idx) => {
+        const d = distanceMeters(busLat, busLng, coord.lat, coord.lng);
+        if (d < minRouteDist) {
+          minRouteDist = d;
+          routeProgressIndex = idx;
+        }
+      });
+      const routeProgressPercent = Math.round(
+        (routeProgressIndex / Math.max(1, normalizedRouteCoords.length - 1)) * 100
+      );
+
       console.log("[DEMO PROGRESSION]", {
         previousIndex,
         nearestIndex,
         safeNearestIndex,
+        shouldAdvance,
+        distanceToNextStop: distanceToNextStop ? Math.round(distanceToNextStop) : null,
         currentStop: currentStop?.name,
         nextStop: nextStop?.name,
         etaMinutes,
+        routeProgressPercent,
         speed: safeSpeed,
       });
 
@@ -1279,7 +1310,7 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
         passedStopIds: [],
         remainingDistanceKm: 0,
         remainingDistanceMeters: 0,
-        progressPercent: Math.round((safeNearestIndex / Math.max(demoStops.length - 1, 1)) * 100),
+        progressPercent: routeProgressPercent,
         etaMinutes,
         avgSpeedKmh: safeSpeed,
         cumulativeDistance: 0,
