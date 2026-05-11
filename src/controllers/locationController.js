@@ -1120,6 +1120,7 @@ const startTracking = async (req, res) => {
           latitude: numLat,
           longitude: numLng,
           trackingActive: true,
+          lastUpdate: Date.now(),
           ...(assignedRoute && {
             routeId: assignedRoute.routeId,
             routeName: assignedRoute.routeName,
@@ -1129,6 +1130,7 @@ const startTracking = async (req, res) => {
           })
         };
         console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE on start:", emitPayload);
+        console.log("[BACKEND] BUS_LOCATION_UPDATE emitted for bus:", busId);
         console.log("[ROUTE EMIT]", {
           busId: emitPayload.busId,
           routeId: emitPayload.routeId,
