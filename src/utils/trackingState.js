@@ -22,8 +22,8 @@ const setTrackingActive = (busId, active, io = null) => {
   const nextActive = active === true;
 
   // When going inactive, clear speed and derived speed to prevent stale data
-  const nextSpeed = nextActive ? (prevState?.speed || 0) : 0;
-  const nextDerivedSpeed = nextActive ? (prevState?.derivedSpeed || 0) : 0;
+  const nextSpeed = nextActive ? (prevState?.speed ?? 0) : 0;
+  const nextDerivedSpeed = nextActive ? (prevState?.derivedSpeed ?? 0) : 0;
 
   // Immutable state update with consistent keys
   const nextState = {
@@ -161,7 +161,7 @@ const setSosState = (busId, sosState, io = null, location = null) => {
     sos: false,
     lastUpdate: Date.now(),
     location: prevState?.location || null,
-    speed: prevState?.speed || 0
+    speed: prevState?.speed ?? 0
   };
   trackingState.set(busId, nextState);
   console.log(`[TRACKING STATE] Bus ${busId}: SOS CLEARED`);
@@ -317,7 +317,6 @@ const setBusRoute = (busId, routeData) => {
     tripId: tripId,
     stops: directionStops, // Direction-specific stop sequence
     routeCoords: routeCoords, // Route corridor for progression
-    currentStopIndex: -1, // Start at -1, will find nearest on first GPS
     lastUpdate: Date.now(),
   };
 
@@ -353,7 +352,6 @@ const getBusRoute = (busId) => {
     routeColor: state.routeColor,
     direction: state.direction,
     tripId: state.tripId,
-    currentStopIndex: state.currentStopIndex,
     routeCoords: state.routeCoords,
     stops: state.stops
   };
@@ -374,7 +372,6 @@ const clearBusRoute = (busId) => {
     routeColor: null,
     direction: null,
     tripId: null,
-    currentStopIndex: null,
     lastUpdate: Date.now(),
   };
   
@@ -393,7 +390,6 @@ const setBusProgression = (busId, progression) => {
   const nextState = {
     ...prevState,
     progression: {
-      ...prevState.progression,
       ...progression,
       lastUpdate: Date.now(),
     },
@@ -442,7 +438,7 @@ const addSpeedSample = (busId, speed) => {
   const progression = prevState.progression || {};
   
   // Keep last 10 speed samples for rolling average
-  const samples = progression.speedSamples || [];
+  const samples = progression.speedSamples ?? [];
   samples.push(speed);
   if (samples.length > 10) samples.shift();
   
@@ -480,7 +476,7 @@ const computeDerivedSpeed = (busId, lat, lng, timestamp) => {
   const prevLat = prevState.prevLat;
   const prevLng = prevState.prevLng;
   const prevTimestamp = prevState.prevTimestamp;
-  const prevDerivedSpeed = prevState.derivedSpeed || 0;
+  const prevDerivedSpeed = prevState.derivedSpeed ?? 0;
 
   let currentDerivedSpeed = prevDerivedSpeed;
 

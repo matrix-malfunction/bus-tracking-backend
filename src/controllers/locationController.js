@@ -53,8 +53,8 @@ function updateStopArrivals(busId, progression, routeForProgression, routeInfoAr
     _setArrivalEntry(currentStopId, currentStopName, {
       ...arrivalBase,
       etaMinutes: 0,
-      currentStopName: currentStopName || null,
-      nextStopName: nextStopName || null,
+      currentStopName: currentStopName ?? null,
+      nextStopName: nextStopName ?? null,
       status: 'AT_STOP'
     });
   }
@@ -63,8 +63,8 @@ function updateStopArrivals(busId, progression, routeForProgression, routeInfoAr
     _setArrivalEntry(nextStopId, nextStopName, {
       ...arrivalBase,
       etaMinutes: etaMinutes != null ? etaMinutes : null,
-      currentStopName: currentStopName || null,
-      nextStopName: nextStopName || null,
+      currentStopName: currentStopName ?? null,
+      nextStopName: nextStopName ?? null,
       status: nextStatus
     });
   }
@@ -79,8 +79,8 @@ function updateStopArrivals(busId, progression, routeForProgression, routeInfoAr
       _setArrivalEntry(sid, sname, {
         ...arrivalBase,
         etaMinutes: null,
-        currentStopName: currentStopName || null,
-        nextStopName: nextStopName || null,
+        currentStopName: currentStopName ?? null,
+        nextStopName: nextStopName ?? null,
         status: 'UPCOMING'
       });
     }
@@ -447,8 +447,8 @@ async function _updateLocationUnsafe(req, res) {
             },
             lat: safeLat,
             lng: safeLng,
-            speed: sanitizeNumber(req.body.speed) || 0,
-            heading: sanitizeNumber(req.body.heading) || 0,
+            speed: sanitizeNumber(req.body.speed) ?? 0,
+            heading: sanitizeNumber(req.body.heading) ?? 0,
             status: "active",
             lastUpdate: new Date(),
           },
@@ -468,8 +468,8 @@ async function _updateLocationUnsafe(req, res) {
         busId: busId.trim(),
         lat: numLat,
         lng: numLng,
-        speed: req.body.speed || 0,
-        heading: req.body.heading || 0,
+        speed: req.body.speed ?? 0,
+        heading: req.body.heading ?? 0,
         status: "active",
         lastUpdate: new Date()
       };
@@ -511,12 +511,12 @@ async function _updateLocationUnsafe(req, res) {
         const rawSpeedKmh = (distanceMeters / timeDiffSec) * 3.6;
         // Reject unrealistic startup jumps (>100 km/h or >500m in one update)
         if (rawSpeedKmh > 100 || distanceMeters > 500) {
-          derivedSpeed = prevStateBeforeCompute.derivedSpeed || 0;
+          derivedSpeed = prevStateBeforeCompute.derivedSpeed ?? 0;
           console.log("[DERIVED SPEED VALIDATION]", {
             busId,
             rawSpeedKmh: Math.round(rawSpeedKmh),
             distanceMeters: Math.round(distanceMeters),
-            prevDerivedSpeed: prevStateBeforeCompute.derivedSpeed || 0,
+            prevDerivedSpeed: prevStateBeforeCompute.derivedSpeed ?? 0,
             clampedTo: derivedSpeed,
             reason: "unrealistic_startup_spike_rejected"
           });
@@ -647,10 +647,10 @@ async function _updateLocationUnsafe(req, res) {
           hasProgression: true,
           isSnapped: !!(progression?.lastProjectedPoint),
           snappedLat: progression?.lastProjectedPoint?.lat || null,
-          currentStopId: progression?.currentStopId || null,
-          nextStopId: progression?.nextStopId || null,
-          nextStopName: progression?.nextStopName || null,
-          nextStopEtaMinutes: progression?.nextStopEtaMinutes || null,
+          currentStopId: progression?.currentStopId ?? null,
+          nextStopId: progression?.nextStopId ?? null,
+          nextStopName: progression?.nextStopName ?? null,
+          nextStopEtaMinutes: progression?.nextStopEtaMinutes ?? null,
         });
       }
     } catch (progressionError) {
@@ -712,7 +712,7 @@ async function _updateLocationUnsafe(req, res) {
             raw: [numLat, numLng],
             snapped: [snappedCoords.snappedLat, snappedCoords.snappedLng],
             distanceFromRoute: Math.round(snappedCoords.distanceFromRoute),
-            isSoftSnap: snappedCoords.isSoftSnap || false
+            isSoftSnap: snappedCoords.isSoftSnap ?? false
           });
         }
       } catch (error) {
@@ -742,11 +742,11 @@ async function _updateLocationUnsafe(req, res) {
             snappedLng: sanitizeNumber(snappedCoords.snappedLng),
             isSnapped: true,
             distanceFromRoute: sanitizeNumber(snappedCoords.distanceFromRoute),
-            isSoftSnap: snappedCoords.isSoftSnap || false
+            isSoftSnap: snappedCoords.isSoftSnap ?? false
           }),
-          speed: sanitizeNumber(speed) || 0,
-          derivedSpeed: sanitizeNumber(derivedSpeed) || 0,
-          heading: Math.round(sanitizeNumber(heading) || 0),
+          speed: sanitizeNumber(speed) ?? 0,
+          derivedSpeed: sanitizeNumber(derivedSpeed) ?? 0,
+          heading: Math.round(sanitizeNumber(heading) ?? 0),
           trackingActive: true,
           ...(routeInfo && {
             routeId: routeInfo.routeId,
@@ -760,23 +760,23 @@ async function _updateLocationUnsafe(req, res) {
           ...(progression && {
             snappedLat: sanitizeNumber(progression.lastProjectedPoint?.lat) ?? null,
             snappedLng: sanitizeNumber(progression.lastProjectedPoint?.lng) ?? null,
-            isSnapped: progression.isSnapped || false,
+            isSnapped: progression.isSnapped ?? false,
             distanceFromRoute: sanitizeNumber(progression.distanceFromRoute) ?? null,
             currentStopId: progression.currentStopId ?? null,
             currentStopName: progression.currentStopName ?? null,
             nextStopId: progression.nextStopId ?? null,
             nextStopName: progression.nextStopName ?? null,
-            passedStopIds: progression.passedStopIds || [],
+            passedStopIds: progression.passedStopIds ?? [],
             nextStopEtaMinutes: sanitizeNumber(progression.etaMinutes) ?? null,
             remainingDistanceMeters: sanitizeNumber(progression.remainingDistanceMeters) ?? null,
-            routeProgressIndex: progression.currentStopIndex ?? -1,
+            routeProgressIndex: progression.currentStopIndex ?? null,
             remainingDistanceKm: sanitizeNumber(progression.remainingDistanceKm) ?? null,
             progressPercent: sanitizeNumber(progression.progressPercent) ?? 0,
             avgSpeedKmh: sanitizeNumber(progression.avgSpeedKmh) ?? 0,
-            derivedSpeed: sanitizeNumber(progression.derivedSpeed) || 0,
+            derivedSpeed: sanitizeNumber(progression.derivedSpeed) ?? 0,
             occupancy: Number.isFinite(progression.occupancy) ? progression.occupancy : null,
             capacity: Number.isFinite(progression.capacity) ? progression.capacity : null,
-            gpsConfidence: progression.gpsConfidence || "UNKNOWN",
+            gpsConfidence: progression.gpsConfidence ?? "UNKNOWN",
             gpsAccuracy: sanitizeNumber(progression.gpsAccuracy) ?? null
           })
         };
@@ -867,7 +867,7 @@ async function _updateLocationUnsafe(req, res) {
                 routeId: progression.routeId,
                 currentStopIndex: progression.currentStopIndex,
                 nextStopIndex: progression.nextStopIndex,
-                passedStopIds: progression.passedStopIds || [],
+                passedStopIds: progression.passedStopIds ?? [],
                 remainingDistanceKm: sanitizeNumber(progression.remainingDistanceKm) ?? null,
                 progressPercent: sanitizeNumber(progression.progressPercent) ?? null,
                 etaMinutes: sanitizeNumber(progression.etaMinutes) ?? null,
@@ -924,7 +924,7 @@ async function _updateLocationUnsafe(req, res) {
       lat: numLat,
       lng: numLng,
       speed: speed, // Always use driver speed, no fallback
-      derivedSpeed: derivedSpeed || 0,
+      derivedSpeed: derivedSpeed ?? 0,
       heading: Math.round(heading),
       lastUpdate: Date.now(),
       trackingActive: true,
@@ -935,9 +935,10 @@ async function _updateLocationUnsafe(req, res) {
         nextStopId: progression.nextStopId ?? null,
         nextStopName: progression.nextStopName ?? null,
         nextStopEtaMinutes: progression.etaMinutes ?? null,
+        currentStopIndex: progression.currentStopIndex ?? null,
         routeProgressIndex: progression.currentStopIndex ?? null,
         remainingDistanceMeters: progression.remainingDistanceMeters ?? null,
-        passedStopIds: progression.passedStopIds || [],
+        passedStopIds: progression.passedStopIds ?? [],
         isSnapped: !!progression.lastProjectedPoint,
       }),
     });
@@ -1027,7 +1028,7 @@ async function getNearestStopHandler(req, res) {
         busId: item.busId,
         latitude,
         longitude,
-        speed: Number(item.speed) || 0,
+        speed: Number(item.speed) ?? 0,
         routeId: item.routeId || null,
         updatedAt: item.updatedAt || item.timestamp || null,
         timestamp: item.timestamp || item.updatedAt || null,
@@ -1134,7 +1135,7 @@ async function getNearestStopHandler(req, res) {
 
     const enrichedBuses = buses
       .map((bus) => {
-        const speed = Number(bus.speed) || 0;
+        const speed = Number(bus.speed) ?? 0;
         const effectiveSpeed = speed > 0 ? speed : 0;
         const routeKey = String(bus.routeId || "");
         const routeStops = routeKey ? stopsByRoute.get(routeKey) || [] : [];
@@ -1510,7 +1511,8 @@ const startTracking = async (req, res) => {
         ...consolidatedBase,
         routeCoords: routeData.routeCoords,
         stops: routeData.stops,
-        passedStopIds: consolidatedBase.passedStopIds || [],
+        passedStopIds: consolidatedBase.passedStopIds ?? [],
+        currentStopIndex: 0,
         routeProgressIndex: 0,
         lastUpdate: Date.now(),
       });

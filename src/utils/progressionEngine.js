@@ -196,8 +196,8 @@ function createFallbackProgression(busId, gpsConfidence, gpsAccuracy) {
     lastProjectedPoint: null,
     lastUpdate: Date.now(),
     jitterFiltered: false,
-    gpsConfidence: gpsConfidence || "UNKNOWN",
-    gpsAccuracy: gpsAccuracy || null,
+    gpsConfidence: gpsConfidence ?? "UNKNOWN",
+    gpsAccuracy: gpsAccuracy ?? null,
     fallback: true // Mark as fallback for debugging
   };
 }
@@ -1074,7 +1074,7 @@ function determineStopProgression(projection, routeStops, prevProgression, accur
   
   let currentStopIndex = -1;
   let nextStopIndex = -1;
-  let passedStopIds = prevProgression?.passedStopIds || [];
+  let passedStopIds = prevProgression?.passedStopIds ?? [];
   let currentStopDistance = null; // Track distance for event engine
   
   // FORWARD-ONLY PROGRESSION LOGIC
@@ -1312,10 +1312,10 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       const fallbackSpeedKmh = speedMps * 3.6;
 
       const prevTrackingState = getTrackingState(busId);
-      const rawDerivedSpeed = prevTrackingState?.derivedSpeed || 0;
-      const effectiveSpeed = rawDerivedSpeed && rawDerivedSpeed > 5
+      const rawDerivedSpeed = prevTrackingState?.derivedSpeed ?? 0;
+      const effectiveSpeed = rawDerivedSpeed > 5
         ? Math.round(rawDerivedSpeed)
-        : Math.round(fallbackSpeedKmh || 35);
+        : Math.round(fallbackSpeedKmh ?? 35);
       const etaSpeedKmh = Math.max(15, effectiveSpeed);
       const etaMinutes = Math.max(1, Math.round(nextDistance / ((etaSpeedKmh * 1000) / 60)));
 
@@ -1355,13 +1355,13 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
         isSnapped: true,
         distanceFromRoute: 0,
         gpsConfidence,
-        gpsAccuracy: safeNumber(accuracy) || null,
+        gpsAccuracy: safeNumber(accuracy) ?? null,
         tripId: normalizedRoute.tripId || null,
         routeId: normalizedRoute.routeId || null,
         currentStopIndex,
         currentStopId: currentStop?.stopId ?? null,
         currentStopName: currentStop?.name ?? null,
-        nextStopIndex: nextStopIndex < demoStops.length ? nextStopIndex : -1,
+        nextStopIndex,
         nextStopId: nextStop?.stopId ?? null,
         nextStopName: nextStop?.name ?? null,
         passedStopIds,
@@ -1390,10 +1390,10 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
 
     // Effective speed: fallback to driver speed / avgSpeedKmh when derivedSpeed is <= 5
     const prevTrackingState = getTrackingState(busId);
-    const rawDerivedSpeed = prevTrackingState?.derivedSpeed || 0;
-    const effectiveSpeed = rawDerivedSpeed && rawDerivedSpeed > 5
+    const rawDerivedSpeed = prevTrackingState?.derivedSpeed ?? 0;
+    const effectiveSpeed = rawDerivedSpeed > 5
       ? Math.round(rawDerivedSpeed)
-      : Math.round(speedKmh || (prevProgression?.avgSpeedKmh) || 35);
+      : Math.round(speedKmh ?? (prevProgression?.avgSpeedKmh ?? 35));
 
     // Project bus position onto route corridor
     console.log("[PROJECTION CHECK]", {
@@ -1492,7 +1492,7 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
   
   // Calculate ETA using stable rolling speed smoothing
   // Get distance to next stop from stopProgress (now includes nextStopDistance)
-  let nextStopDistanceMeters = stopProgress.nextStopDistance || 0;
+  let nextStopDistanceMeters = stopProgress.nextStopDistance ?? 0;
   if (!nextStopDistanceMeters && stopProgress.currentStopDistance !== null) {
     // No next stop, use current stop distance
     nextStopDistanceMeters = stopProgress.currentStopDistance;
@@ -1520,8 +1520,8 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     isSnapped: true,
     distanceFromRoute: safeNumber(projection.distanceFromCorridor) ?? null,
     gpsConfidence,
-    gpsAccuracy: safeNumber(accuracy) || null,
-    effectiveThreshold: safeNumber(effectiveThreshold) || STOP_ARRIVAL_THRESHOLD_METERS,
+    gpsAccuracy: safeNumber(accuracy) ?? null,
+    effectiveThreshold: safeNumber(effectiveThreshold) ?? STOP_ARRIVAL_THRESHOLD_METERS,
     tripId: normalizedRoute.tripId || null,
     routeId: normalizedRoute.routeId || null,
     currentStopIndex: stopProgress.currentStopIndex,
@@ -1530,17 +1530,17 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     nextStopIndex: stopProgress.nextStopIndex,
     nextStopId,
     nextStopName,
-    passedStopIds: stopProgress.passedStopIds || [],
-    remainingDistanceKm: safeNumber(Math.round(remainingDistanceKm * 100) / 100) || 0,
+    passedStopIds: stopProgress.passedStopIds ?? [],
+    remainingDistanceKm: safeNumber(Math.round(remainingDistanceKm * 100) / 100) ?? 0,
     remainingDistanceMeters: safeNumber(remainingDistanceMeters) || null,
-    progressPercent: safeNumber(progressPercent) || 0,
-    etaMinutes: safeNumber(etaMinutes) || null,
-    avgSpeedKmh: safeNumber(Math.round(rollingSpeedKmh * 10) / 10) || 0,
+    progressPercent: safeNumber(progressPercent) ?? 0,
+    etaMinutes: safeNumber(etaMinutes) ?? null,
+    avgSpeedKmh: safeNumber(Math.round(rollingSpeedKmh * 10) / 10) ?? 0,
     derivedSpeed: effectiveSpeed,
     occupancy: Math.floor(25 + Math.random() * 35),
     capacity: 50,
-    cumulativeDistance: safeNumber(Math.round(projection.cumulativeDistance)) || 0,
-    totalRouteLength: safeNumber(Math.round(projection.totalRouteLength)) || 0,
+    cumulativeDistance: safeNumber(Math.round(projection.cumulativeDistance)) ?? 0,
+    totalRouteLength: safeNumber(Math.round(projection.totalRouteLength)) ?? 0,
     lastProjectedPoint: projection.projectedPoint || null,
     lastUpdate: Date.now(),
     jitterFiltered,
