@@ -708,7 +708,7 @@ async function _updateLocationUnsafe(req, res) {
     // === SOCKET EMIT ===
     // CRITICAL: Socket emit failure must not break tracking
     try {
-      if (io && busId && Number.isFinite(numLat) && Number.isFinite(numLng)) {
+      if (io && busId && Number.isFinite(numLat) && Number.isFinite(numLng) && state?.trackingActive === true) {
         // Sanitize all numeric fields for safe serialization
         const emitPayload = {
           busId: busId.trim(),
@@ -1500,8 +1500,9 @@ const startTracking = async (req, res) => {
     
     const io = req.app.get("io");
     
-    // Immediately emit BUS_LOCATION_UPDATE if location provided
-    if (io && busId && lat != null && lng != null) {
+    // Immediately emit BUS_LOCATION_UPDATE if location provided and tracking active
+    const startState = trackingState.get(busId);
+    if (io && busId && lat != null && lng != null && startState?.trackingActive === true) {
       const numLat = Number(lat);
       const numLng = Number(lng);
       if (Number.isFinite(numLat) && Number.isFinite(numLng)) {
