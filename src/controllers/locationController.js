@@ -631,6 +631,12 @@ async function _updateLocationUnsafe(req, res) {
           nextStopEtaMinutes: progression?.etaMinutes,
         });
 
+        // DRIVER-OVERRIDE: Accept remainingDistanceMeters from driver app (simulation or real GPS)
+        if (progression && Number.isFinite(req.body?.remainingDistanceMeters)) {
+          progression.remainingDistanceMeters = req.body.remainingDistanceMeters;
+          console.log("[DRIVER OVERRIDE] remainingDistanceMeters:", progression.remainingDistanceMeters);
+        }
+
         if (!progression?.lastProjectedPoint) {
           console.warn("[PROJECTION FAILED]", {
             busId,
