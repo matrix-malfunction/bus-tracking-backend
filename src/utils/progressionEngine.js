@@ -1387,6 +1387,18 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     // Store updated progression
     setBusProgression(busId, progression);
 
+    console.log("[PROGRESSION RETURN]", {
+      busId,
+      currentStopIndex: progression.currentStopIndex,
+      currentStopName: progression.currentStopName,
+      nextStopIndex: progression.nextStopIndex,
+      nextStopName: progression.nextStopName,
+      etaMinutes: progression.etaMinutes,
+      snappedLat: progression.snappedLat,
+      snappedLng: progression.snappedLng,
+      isSnapped: progression.isSnapped,
+    });
+
     return progression;
   } catch (error) {
     console.error("[PROGRESSION] CRASH", {

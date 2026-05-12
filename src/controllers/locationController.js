@@ -698,28 +698,26 @@ async function _updateLocationUnsafe(req, res) {
             routeCoords: routeInfo.routeCoords || [],
           }),
           // Include progression fields for live stop display (from progression engine)
-          ...(progression && {
-            snappedLat: sanitizeNumber(progression.snappedLat) ?? sanitizeNumber(progression.lastProjectedPoint?.lat) ?? null,
-            snappedLng: sanitizeNumber(progression.snappedLng) ?? sanitizeNumber(progression.lastProjectedPoint?.lng) ?? null,
-            isSnapped: progression.isSnapped ?? false,
-            distanceFromRoute: sanitizeNumber(progression.distanceFromRoute) ?? null,
-            currentStopId: progression.currentStopId ?? null,
-            currentStopName: progression.currentStopName ?? null,
-            nextStopId: progression.nextStopId ?? null,
-            nextStopName: progression.nextStopName ?? null,
-            passedStopIds: progression.passedStopIds ?? [],
-            nextStopEtaMinutes: sanitizeNumber(progression.etaMinutes) ?? null,
-            remainingDistanceMeters: sanitizeNumber(progression.remainingDistanceMeters) ?? null,
-            routeProgressIndex: progression.currentStopIndex ?? null,
-            remainingDistanceKm: sanitizeNumber(progression.remainingDistanceKm) ?? null,
-            progressPercent: sanitizeNumber(progression.progressPercent) ?? 0,
-            avgSpeedKmh: sanitizeNumber(progression.avgSpeedKmh) ?? 0,
-            derivedSpeed: sanitizeNumber(progression.derivedSpeed) ?? 0,
-            occupancy: req.body?.occupancy ?? existingBus.occupancy ?? "UNKNOWN",
-            capacity: Number.isFinite(progression.capacity) ? progression.capacity : null,
-            gpsConfidence: progression.gpsConfidence ?? "UNKNOWN",
-            gpsAccuracy: sanitizeNumber(progression.gpsAccuracy) ?? null
-          })
+          snappedLat: sanitizeNumber(progression?.snappedLat) ?? sanitizeNumber(progression?.lastProjectedPoint?.lat) ?? existingBus.snappedLat ?? null,
+          snappedLng: sanitizeNumber(progression?.snappedLng) ?? sanitizeNumber(progression?.lastProjectedPoint?.lng) ?? existingBus.snappedLng ?? null,
+          isSnapped: progression?.isSnapped ?? existingBus.isSnapped ?? false,
+          distanceFromRoute: sanitizeNumber(progression?.distanceFromRoute) ?? existingBus.distanceFromRoute ?? null,
+          currentStopId: progression?.currentStopId ?? existingBus.currentStopId ?? null,
+          currentStopName: progression?.currentStopName ?? existingBus.currentStopName ?? null,
+          nextStopId: progression?.nextStopId ?? existingBus.nextStopId ?? null,
+          nextStopName: progression?.nextStopName ?? existingBus.nextStopName ?? null,
+          passedStopIds: progression?.passedStopIds ?? existingBus.passedStopIds ?? [],
+          nextStopEtaMinutes: sanitizeNumber(progression?.etaMinutes) ?? existingBus.nextStopEtaMinutes ?? null,
+          remainingDistanceMeters: sanitizeNumber(progression?.remainingDistanceMeters) ?? existingBus.remainingDistanceMeters ?? null,
+          routeProgressIndex: progression?.currentStopIndex ?? existingBus.routeProgressIndex ?? null,
+          remainingDistanceKm: sanitizeNumber(progression?.remainingDistanceKm) ?? existingBus.remainingDistanceKm ?? null,
+          progressPercent: sanitizeNumber(progression?.progressPercent) ?? existingBus.progressPercent ?? 0,
+          avgSpeedKmh: sanitizeNumber(progression?.avgSpeedKmh) ?? existingBus.avgSpeedKmh ?? 0,
+          derivedSpeed: sanitizeNumber(progression?.derivedSpeed) ?? existingBus.derivedSpeed ?? 0,
+          occupancy: req.body?.occupancy ?? existingBus.occupancy ?? "UNKNOWN",
+          capacity: Number.isFinite(progression?.capacity) ? progression.capacity : (existingBus.capacity ?? null),
+          gpsConfidence: progression?.gpsConfidence ?? existingBus.gpsConfidence ?? "UNKNOWN",
+          gpsAccuracy: sanitizeNumber(progression?.gpsAccuracy) ?? existingBus.gpsAccuracy ?? null
         };
         
         // Safe payload serialization - prevents circular references and NaN
@@ -870,21 +868,19 @@ async function _updateLocationUnsafe(req, res) {
       lastUpdate: Date.now(),
       trackingActive: true,
       location: { latitude: numLat, longitude: numLng },
-      ...(progression && {
-        currentStopId: progression.currentStopId ?? null,
-        currentStopName: progression.currentStopName ?? null,
-        nextStopId: progression.nextStopId ?? null,
-        nextStopName: progression.nextStopName ?? null,
-        nextStopEtaMinutes: progression.etaMinutes ?? null,
-        currentStopIndex: progression.currentStopIndex ?? null,
-        routeProgressIndex: progression.currentStopIndex ?? null,
-        remainingDistanceMeters: progression.remainingDistanceMeters ?? null,
-        passedStopIds: progression.passedStopIds ?? [],
-        snappedLat: sanitizeNumber(progression.snappedLat) ?? sanitizeNumber(progression.lastProjectedPoint?.lat) ?? null,
-        snappedLng: sanitizeNumber(progression.snappedLng) ?? sanitizeNumber(progression.lastProjectedPoint?.lng) ?? null,
-        distanceFromRoute: sanitizeNumber(progression.distanceFromRoute) ?? null,
-        isSnapped: progression.isSnapped ?? !!progression.lastProjectedPoint,
-      }),
+      currentStopId: progression?.currentStopId ?? existingBus.currentStopId ?? null,
+      currentStopName: progression?.currentStopName ?? existingBus.currentStopName ?? null,
+      nextStopId: progression?.nextStopId ?? existingBus.nextStopId ?? null,
+      nextStopName: progression?.nextStopName ?? existingBus.nextStopName ?? null,
+      nextStopEtaMinutes: progression?.etaMinutes ?? existingBus.nextStopEtaMinutes ?? null,
+      currentStopIndex: progression?.currentStopIndex ?? existingBus.currentStopIndex ?? null,
+      routeProgressIndex: progression?.currentStopIndex ?? existingBus.routeProgressIndex ?? null,
+      remainingDistanceMeters: progression?.remainingDistanceMeters ?? existingBus.remainingDistanceMeters ?? null,
+      passedStopIds: progression?.passedStopIds ?? existingBus.passedStopIds ?? [],
+      snappedLat: sanitizeNumber(progression?.snappedLat) ?? sanitizeNumber(progression?.lastProjectedPoint?.lat) ?? existingBus.snappedLat ?? null,
+      snappedLng: sanitizeNumber(progression?.snappedLng) ?? sanitizeNumber(progression?.lastProjectedPoint?.lng) ?? existingBus.snappedLng ?? null,
+      distanceFromRoute: sanitizeNumber(progression?.distanceFromRoute) ?? existingBus.distanceFromRoute ?? null,
+      isSnapped: progression?.isSnapped ?? !!progression?.lastProjectedPoint ?? existingBus.isSnapped ?? false,
       occupancy: req.body?.occupancy ?? existingBus.occupancy ?? "UNKNOWN",
     });
     console.log("[BACKEND] ✅ State updated (MERGED):", busId, "speed:", Math.round(speed), "km/h", "route:", existingBus.routeId || "none");
@@ -902,6 +898,15 @@ async function _updateLocationUnsafe(req, res) {
       };
             // Clean undefined values for JSON safety
       const safeEmit = JSON.parse(JSON.stringify(emitPayload));
+      console.log("[EMIT CHECK]", {
+        busId: safeEmit.busId,
+        currentStopName: safeEmit.currentStopName,
+        nextStopName: safeEmit.nextStopName,
+        nextStopEtaMinutes: safeEmit.nextStopEtaMinutes,
+        currentStopIndex: safeEmit.currentStopIndex,
+        snappedLat: safeEmit.snappedLat,
+        isSnapped: safeEmit.isSnapped,
+      });
       io.emit("BUS_LOCATION_UPDATE", safeEmit);
       console.log("[BACKEND] 📡 Emitting FULL STATE BUS_LOCATION_UPDATE:", {
         busId,
