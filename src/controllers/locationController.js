@@ -854,8 +854,7 @@ async function _updateLocationUnsafe(req, res) {
           isSnapped: safePayload.isSnapped,
         });
 
-        io.emit("BUS_LOCATION_UPDATE", safePayload);
-        console.log("[BACKEND] ✅ Socket event emitted");
+        // Old partial emit removed — full state emit happens after trackingState.set below
         
         // === EMIT PROGRESSION UPDATE (if changed) ===
         if (progression) {
@@ -943,6 +942,29 @@ async function _updateLocationUnsafe(req, res) {
       }),
     });
     console.log("[BACKEND] ✅ State updated (MERGED):", busId, "speed:", Math.round(speed), "km/h", "route:", existingBus.routeId || "none");
+
+    // === EMIT FULL HYDRATED STATE ===
+    // Build emit directly from trackingState so ALL persisted metadata is included
+    const fullState = trackingState.get(busId);
+    if (io && fullState) {
+      const emitPayload = {
+        ...fullState,
+        latitude: fullState.lat ?? fullState.location?.latitude ?? null,
+        longitude: fullState.lng ?? fullState.location?.longitude ?? null,
+        timestamp: Date.now(),
+        trackingActive: true,
+      };
+      // Clean undefined values for JSON safety
+      const safeEmit = JSON.parse(JSON.stringify(emitPayload));
+      io.emit("BUS_LOCATION_UPDATE", safeEmit);
+      console.log("[BACKEND] 📡 Emitting FULL STATE BUS_LOCATION_UPDATE:", {
+        busId,
+        currentStopName: safeEmit.currentStopName,
+        nextStopName: safeEmit.nextStopName,
+        nextStopEtaMinutes: safeEmit.nextStopEtaMinutes,
+        routeProgressIndex: safeEmit.routeProgressIndex,
+      });
+    }
 
     const updatedTrackingState = trackingState.get(busId);
     console.log("[TRACKING STATE VERIFY]", {
@@ -1525,32 +1547,23 @@ const startTracking = async (req, res) => {
       const numLat = Number(lat);
       const numLng = Number(lng);
       if (Number.isFinite(numLat) && Number.isFinite(numLng)) {
+        // === EMIT FULL HYDRATED STATE ===
         const emitPayload = {
-          busId: busId.trim(),
+          ...startState,
           latitude: numLat,
           longitude: numLng,
+          timestamp: Date.now(),
           trackingActive: true,
-          lastUpdate: Date.now(),
-          ...(assignedRoute && {
-            routeId: assignedRoute.routeId,
-            routeName: assignedRoute.routeName,
-            routeColor: assignedRoute.routeColor,
-            direction: assignedRoute.direction,
-            tripId: assignedRoute.tripId,
-            routeCoords: routeData?.routeCoords || [],
-            stops: routeData?.stops || []
-          })
         };
-        console.log("[BACKEND] 📡 Emitting BUS_LOCATION_UPDATE on start:", emitPayload);
-        console.log("[BACKEND] BUS_LOCATION_UPDATE emitted for bus:", busId);
-        console.log("[ROUTE EMIT]", {
-          busId: emitPayload.busId,
-          routeId: emitPayload.routeId,
-          routeName: emitPayload.routeName,
-          direction: emitPayload.direction,
-          tripId: emitPayload.tripId,
+        const safeEmit = JSON.parse(JSON.stringify(emitPayload));
+        console.log("[BACKEND] 📡 Emitting FULL STATE BUS_LOCATION_UPDATE on start:", {
+          busId,
+          currentStopName: safeEmit.currentStopName,
+          nextStopName: safeEmit.nextStopName,
+          nextStopEtaMinutes: safeEmit.nextStopEtaMinutes,
+          routeProgressIndex: safeEmit.routeProgressIndex,
         });
-        io.emit("BUS_LOCATION_UPDATE", emitPayload);
+        io.emit("BUS_LOCATION_UPDATE", safeEmit);
       }
     }
     
