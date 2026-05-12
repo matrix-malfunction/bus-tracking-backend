@@ -780,7 +780,7 @@ async function _updateLocationUnsafe(req, res) {
             progressPercent: sanitizeNumber(progression.progressPercent) ?? 0,
             avgSpeedKmh: sanitizeNumber(progression.avgSpeedKmh) ?? 0,
             derivedSpeed: sanitizeNumber(progression.derivedSpeed) ?? 0,
-            occupancy: Number.isFinite(progression.occupancy) ? progression.occupancy : null,
+            occupancy: req.body?.occupancy ?? existingBus.occupancy ?? "UNKNOWN",
             capacity: Number.isFinite(progression.capacity) ? progression.capacity : null,
             gpsConfidence: progression.gpsConfidence ?? "UNKNOWN",
             gpsAccuracy: sanitizeNumber(progression.gpsAccuracy) ?? null
@@ -947,6 +947,7 @@ async function _updateLocationUnsafe(req, res) {
         passedStopIds: progression.passedStopIds ?? [],
         isSnapped: !!progression.lastProjectedPoint,
       }),
+      occupancy: req.body?.occupancy ?? existingBus.occupancy ?? "UNKNOWN",
     });
     console.log("[BACKEND] ✅ State updated (MERGED):", busId, "speed:", Math.round(speed), "km/h", "route:", existingBus.routeId || "none");
 
@@ -1386,7 +1387,7 @@ const startTracking = async (req, res) => {
     console.log("[BACKEND] ========== START TRACKING ==========");
     console.log("[BACKEND] req.body:", req.body);
     
-    const { busId, lat, lng, routeId, routeName, routeColor, direction } = req.body;
+    const { busId, lat, lng, routeId, routeName, routeColor, direction, occupancy } = req.body;
     
     console.log("[BACKEND START_TRACKING BODY]", { busId, routeId, routeName, routeColor, direction });
     if (!busId) {
@@ -1520,6 +1521,7 @@ const startTracking = async (req, res) => {
         passedStopIds: consolidatedBase.passedStopIds ?? [],
         currentStopIndex: 0,
         routeProgressIndex: 0,
+        occupancy: occupancy || consolidatedBase.occupancy || "UNKNOWN",
         lastUpdate: Date.now(),
       });
 
