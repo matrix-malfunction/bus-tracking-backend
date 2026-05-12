@@ -695,6 +695,7 @@ async function _updateLocationUnsafe(req, res) {
             routeColor: routeInfo.routeColor,
             direction: routeInfo.direction,
             tripId: routeInfo.tripId,
+            routeCoords: routeInfo.routeCoords || [],
           }),
           // Include progression fields for live stop display (from progression engine)
           ...(progression && {
@@ -879,7 +880,10 @@ async function _updateLocationUnsafe(req, res) {
         routeProgressIndex: progression.currentStopIndex ?? null,
         remainingDistanceMeters: progression.remainingDistanceMeters ?? null,
         passedStopIds: progression.passedStopIds ?? [],
-        isSnapped: !!progression.lastProjectedPoint,
+        snappedLat: sanitizeNumber(progression.snappedLat) ?? sanitizeNumber(progression.lastProjectedPoint?.lat) ?? null,
+        snappedLng: sanitizeNumber(progression.snappedLng) ?? sanitizeNumber(progression.lastProjectedPoint?.lng) ?? null,
+        distanceFromRoute: sanitizeNumber(progression.distanceFromRoute) ?? null,
+        isSnapped: progression.isSnapped ?? !!progression.lastProjectedPoint,
       }),
       occupancy: req.body?.occupancy ?? existingBus.occupancy ?? "UNKNOWN",
     });
@@ -896,8 +900,7 @@ async function _updateLocationUnsafe(req, res) {
         timestamp: Date.now(),
         trackingActive: true,
       };
-      delete emitPayload.routeCoords;
-      // Clean undefined values for JSON safety
+            // Clean undefined values for JSON safety
       const safeEmit = JSON.parse(JSON.stringify(emitPayload));
       io.emit("BUS_LOCATION_UPDATE", safeEmit);
       console.log("[BACKEND] 📡 Emitting FULL STATE BUS_LOCATION_UPDATE:", {
@@ -1512,8 +1515,7 @@ const startTracking = async (req, res) => {
           timestamp: Date.now(),
           trackingActive: true,
         };
-        delete emitPayload.routeCoords;
-        const safeEmit = JSON.parse(JSON.stringify(emitPayload));
+                const safeEmit = JSON.parse(JSON.stringify(emitPayload));
         console.log("[BACKEND] 📡 Emitting FULL STATE BUS_LOCATION_UPDATE on start:", {
           busId,
           currentStopName: safeEmit.currentStopName,

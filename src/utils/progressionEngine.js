@@ -1209,6 +1209,12 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     normalizedRouteCoords = densifyRouteCoords(normalizedRouteCoords);
     console.log("[DENSIFIED ROUTE]", { originalCount: rawRouteCoords.length, denseCount: normalizedRouteCoords.length });
 
+    // Require minimum dense coordinates for reliable snapping
+    if (normalizedRouteCoords.length < 20) {
+      console.log("[PROGRESSION EARLY RETURN]", "INSUFFICIENT_DENSE_COORDS", { denseCount: normalizedRouteCoords.length });
+      return createFallbackProgression(busId, gpsConfidence, accuracy);
+    }
+
     // Build normalized stops
     const rawStops = route?.stops || [];
     const demoStops = rawStops.map((stop) => {
