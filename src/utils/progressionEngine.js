@@ -1153,31 +1153,38 @@ function calculateETA(remainingDistanceKm, busId) {
   };
 }
 
+
 /**
- * Main progression computation function
- * Called during each BUS_LOCATION_UPDATE
+ * Densify sparse route coordinates to ~15m spacing for accurate snapping
  */
+function densifyRouteCoords(coords) {
+  if (!coords || coords.length < 2) return coords || [];
+  const dense = [coords[0]];
+  for (let i = 0; i < coords.length - 1; i++) {
+    const start = coords[i];
+    const end = coords[i + 1];
+    const segDist = distanceMeters(start.lat, start.lng, end.lat, end.lng);
+    const steps = Math.max(3, Math.ceil(segDist / 15));
+    for (let j = 1; j < steps; j++) {
+      const t = j / steps;
+      dense.push({
+        lat: start.lat + (end.lat - start.lat) * t,
+        lng: start.lng + (end.lng - start.lng) * t,
+      });
+    }
+    dense.push(end);
+  }
+  return dense;
+}
+
 function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy) {
   try {
     console.log("[ENGINE ENTRY]", {
       busId,
       hasStops: !!route?.stops?.length,
       stopsCount: route?.stops?.length,
-      firstStop: route?.stops?.[0],
-      firstStopType: typeof route?.stops?.[0],
       hasRouteCoords: !!(route?.routeCoords?.length || route?.coordinates?.length),
       routeCoordsCount: route?.routeCoords?.length || route?.coordinates?.length,
-    });
-
-    // Validate inputs
-    console.log("[PROGRESSION INPUT]", {
-      busId,
-      lat: busLat,
-      lng: busLng,
-      routeCoordsCount: route?.routeCoords?.length || route?.coordinates?.length,
-      stopCount: route?.stops?.length,
-      hasRouteCoordinates: !!(route?.routeCoords?.length || route?.coordinates?.length),
-      hasStops: !!route?.stops?.length,
     });
 
     if (!Number.isFinite(busLat) || !Number.isFinite(busLng) || !route) {
@@ -1185,34 +1192,25 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       return createFallbackProgression(busId, null, null);
     }
 
-    // GPS ACCURACY CHECK: Early validation
     const gpsConfidence = getGpsConfidence(accuracy);
 
-    // ROUTE HYDRATION: Normalize route coordinates ONCE with format support
+    // ROUTE HYDRATION: Normalize route coordinates ONCE
     const rawRouteCoords = route?.routeCoords || route?.coordinates || [];
-    const normalizedRouteCoords = (Array.isArray(rawRouteCoords) ? rawRouteCoords : [])
+    let normalizedRouteCoords = (Array.isArray(rawRouteCoords) ? rawRouteCoords : [])
       .map(toLatLng)
       .filter(Boolean);
 
-    // Safe validation for route coordinates
     if (normalizedRouteCoords.length < 2) {
       console.log("[PROGRESSION EARLY RETURN]", "NO_ROUTE_COORDS");
-      console.warn("[PROGRESSION] No route coords", { busId, routeId: route?.routeId, count: normalizedRouteCoords.length });
       return createFallbackProgression(busId, gpsConfidence, accuracy);
     }
 
-    console.log("[ROUTE SAMPLE]", normalizedRouteCoords.slice(0, 5));
+    // DENSIFY: interpolate to ~15m spacing for accurate snapping
+    normalizedRouteCoords = densifyRouteCoords(normalizedRouteCoords);
+    console.log("[DENSIFIED ROUTE]", { originalCount: rawRouteCoords.length, denseCount: normalizedRouteCoords.length });
 
-    // Create normalized route object with guaranteed coordinates
-    const normalizedRoute = {
-      ...route,
-      routeCoords: normalizedRouteCoords,
-      coordinates: normalizedRouteCoords
-    };
-
-    // === ROUTE-POLYLINE-BASED PROGRESSION ===
-    // Uses dense route coordinates to determine stop position reliably
-    const rawStops = normalizedRoute.stops || [];
+    // Build normalized stops
+    const rawStops = route?.stops || [];
     const demoStops = rawStops.map((stop) => {
       if (typeof stop === "string") {
         const coords = getStopCoordsById(stop);
@@ -1225,370 +1223,166 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       return typeof lat === "number" && typeof lng === "number" ? { stopId, name, lat, lng } : null;
     }).filter(Boolean);
 
-    if (demoStops.length >= 2) {
-      // 1. Find nearest route coordinate index to bus
-      let nearestCoordIndex = 0;
-      let minCoordDist = Infinity;
-      normalizedRouteCoords.forEach((coord, idx) => {
-        const d = distanceMeters(busLat, busLng, coord.lat, coord.lng);
-        if (d < minCoordDist) {
-          minCoordDist = d;
-          nearestCoordIndex = idx;
-        }
-      });
-
-      // 2. Map each stop to its nearest route coordinate index
-      const stopCoordIndices = demoStops.map((stop) => {
-        let bestIdx = 0;
-        let bestDist = Infinity;
-        normalizedRouteCoords.forEach((coord, idx) => {
-          const d = distanceMeters(stop.lat, stop.lng, coord.lat, coord.lng);
-          if (d < bestDist) {
-            bestDist = d;
-            bestIdx = idx;
-          }
-        });
-        return bestIdx;
-      });
-
-      // 3-4. GPS-authoritative stop determination
-      // Compute raw current/next from nearest route coordinate
-      let rawCurrentStopIndex = -1;
-      let rawNextStopIndex = -1;
-      for (let i = 0; i < demoStops.length; i++) {
-        if (stopCoordIndices[i] <= nearestCoordIndex) {
-          rawCurrentStopIndex = i;
-        }
-        if (stopCoordIndices[i] > nearestCoordIndex && rawNextStopIndex === -1) {
-          rawNextStopIndex = i;
-        }
-      }
-      if (rawCurrentStopIndex < 0) rawCurrentStopIndex = 0;
-      if (rawNextStopIndex < 0) rawNextStopIndex = Math.min(rawCurrentStopIndex + 1, demoStops.length - 1);
-
-      // Forward-only hysteresis: use previous progression to prevent backward GPS jitter
-      const prevProgression = getBusProgression(busId);
-      const previousCurrentIndex = Number.isFinite(prevProgression?.currentStopIndex)
-        ? prevProgression.currentStopIndex
-        : -1;
-
-      let currentStopIndex = rawCurrentStopIndex;
-      let nextStopIndex = rawNextStopIndex;
-
-      if (previousCurrentIndex >= 0) {
-        if (rawCurrentStopIndex < previousCurrentIndex) {
-          // GPS jitter caused backward jump — hold previous stop
-          currentStopIndex = previousCurrentIndex;
-          nextStopIndex = Math.min(previousCurrentIndex + 1, demoStops.length - 1);
-        }
-      }
-
-      // Safety clamps
-      if (currentStopIndex < 0) currentStopIndex = 0;
-      if (currentStopIndex >= demoStops.length) currentStopIndex = demoStops.length - 1;
-      if (nextStopIndex <= currentStopIndex) nextStopIndex = Math.min(currentStopIndex + 1, demoStops.length - 1);
-      if (nextStopIndex >= demoStops.length) nextStopIndex = demoStops.length - 1;
-
-      const currentStop = demoStops[currentStopIndex];
-      const nextStop = demoStops[nextStopIndex];
-
-      // ETA: distance along route from current bus position to next stop
-      let nextDistanceAlongRoute = 0;
-      for (let i = nearestCoordIndex; i < stopCoordIndices[nextStopIndex] && i < normalizedRouteCoords.length - 1; i++) {
-        nextDistanceAlongRoute += distanceMeters(
-          normalizedRouteCoords[i].lat, normalizedRouteCoords[i].lng,
-          normalizedRouteCoords[i + 1].lat, normalizedRouteCoords[i + 1].lng
-        );
-      }
-      // Add straight-line from bus to nearest coord (small correction)
-      nextDistanceAlongRoute += distanceMeters(busLat, busLng, normalizedRouteCoords[nearestCoordIndex].lat, normalizedRouteCoords[nearestCoordIndex].lng);
-
-      const fallbackSpeedKmh = speedMps * 3.6;
-      const prevTrackingState = getTrackingState(busId);
-      const rawDerivedSpeed = prevTrackingState?.derivedSpeed ?? 0;
-      const effectiveSpeed = rawDerivedSpeed > 5
-        ? Math.round(rawDerivedSpeed)
-        : Math.round(fallbackSpeedKmh ?? 35);
-      const etaSpeedKmh = Math.max(15, effectiveSpeed);
-      const etaMinutes = nextDistanceAlongRoute > 50
-        ? Math.max(1, Math.round(nextDistanceAlongRoute / ((etaSpeedKmh * 1000) / 60)))
-        : 0;
-
-      // Route progress based on nearest dense coordinate
-      let routeProgressIndex = 0;
-      let minRouteDist = Infinity;
-      normalizedRouteCoords.forEach((coord, idx) => {
-        const d = distanceMeters(busLat, busLng, coord.lat, coord.lng);
-        if (d < minRouteDist) {
-          minRouteDist = d;
-          routeProgressIndex = idx;
-        }
-      });
-      const routeProgressPercent = Math.round(
-        (routeProgressIndex / Math.max(1, normalizedRouteCoords.length - 1)) * 100
-      );
-
-      // passedStopIds: all stops before current
-      const passedStopIds = [];
-      for (let i = 0; i < currentStopIndex; i++) {
-        if (demoStops[i]?.stopId) passedStopIds.push(demoStops[i].stopId);
-      }
-
-      console.log("[ROUTE-POLYLINE PROGRESSION]", {
-        nearestCoordIndex,
-        currentStopIndex,
-        nextStopIndex,
-        currentStop: currentStop?.name,
-        nextStop: nextStop?.name,
-        etaMinutes,
-        routeProgressPercent,
-        effectiveSpeed,
-      });
-
-      return {
-        busId,
-        isSnapped: true,
-        distanceFromRoute: 0,
-        gpsConfidence,
-        gpsAccuracy: safeNumber(accuracy) ?? null,
-        tripId: normalizedRoute.tripId || null,
-        routeId: normalizedRoute.routeId || null,
-        currentStopIndex,
-        routeProgressIndex: currentStopIndex,
-        currentStopId: currentStop?.stopId ?? null,
-        currentStopName: currentStop?.name ?? null,
-        nextStopIndex,
-        nextStopId: nextStop?.stopId ?? null,
-        nextStopName: nextStop?.name ?? null,
-        passedStopIds,
-        remainingDistanceKm: 0,
-        remainingDistanceMeters: 0,
-        progressPercent: routeProgressPercent,
-        etaMinutes,
-        avgSpeedKmh: effectiveSpeed,
-        derivedSpeed: effectiveSpeed,
-        occupancy: Math.floor(25 + Math.random() * 35),
-        capacity: 50,
-        cumulativeDistance: 0,
-        totalRouteLength: 0,
-        lastProjectedPoint: { lat: busLat, lng: busLng },
-        lastUpdate: Date.now(),
-        jitterFiltered: false,
-        routeCoords: normalizedRoute.routeCoords
-      };
+    if (demoStops.length < 2) {
+      console.log("[PROGRESSION EARLY RETURN]", "INSUFFICIENT_STOPS", { stopCount: demoStops.length });
+      return createFallbackProgression(busId, gpsConfidence, accuracy);
     }
 
-    // Get previous progression state
+    // 1. Find nearest route coordinate index to bus
+    let nearestCoordIndex = 0;
+    let minCoordDist = Infinity;
+    normalizedRouteCoords.forEach((coord, idx) => {
+      const d = distanceMeters(busLat, busLng, coord.lat, coord.lng);
+      if (d < minCoordDist) {
+        minCoordDist = d;
+        nearestCoordIndex = idx;
+      }
+    });
+
+    const snappedLat = normalizedRouteCoords[nearestCoordIndex].lat;
+    const snappedLng = normalizedRouteCoords[nearestCoordIndex].lng;
+    const distanceFromRoute = minCoordDist;
+
+    // 2. Map each stop to its nearest route coordinate index
+    const stopCoordIndices = demoStops.map((stop) => {
+      let bestIdx = 0;
+      let bestDist = Infinity;
+      normalizedRouteCoords.forEach((coord, idx) => {
+        const d = distanceMeters(stop.lat, stop.lng, coord.lat, coord.lng);
+        if (d < bestDist) {
+          bestDist = d;
+          bestIdx = idx;
+        }
+      });
+      return bestIdx;
+    });
+
+    // 3. Determine raw current/next stops from bus position on route
+    let rawCurrentStopIndex = -1;
+    let rawNextStopIndex = -1;
+    for (let i = 0; i < demoStops.length; i++) {
+      if (stopCoordIndices[i] <= nearestCoordIndex) {
+        rawCurrentStopIndex = i;
+      }
+      if (stopCoordIndices[i] > nearestCoordIndex && rawNextStopIndex === -1) {
+        rawNextStopIndex = i;
+      }
+    }
+    if (rawCurrentStopIndex < 0) rawCurrentStopIndex = 0;
+    if (rawNextStopIndex < 0) rawNextStopIndex = Math.min(rawCurrentStopIndex + 1, demoStops.length - 1);
+
+    // 4. Forward-only jitter protection
     const prevProgression = getBusProgression(busId);
+    const previousCurrentIndex = Number.isFinite(prevProgression?.currentStopIndex)
+      ? prevProgression.currentStopIndex
+      : -1;
 
-    // Convert speed to km/h for display
-    const speedKmh = speedMps * 3.6;
+    let currentStopIndex = rawCurrentStopIndex;
+    let nextStopIndex = rawNextStopIndex;
 
-    // Effective speed: fallback to driver speed / avgSpeedKmh when derivedSpeed is <= 5
+    if (previousCurrentIndex >= 0 && rawCurrentStopIndex < previousCurrentIndex) {
+      currentStopIndex = previousCurrentIndex;
+      nextStopIndex = Math.min(previousCurrentIndex + 1, demoStops.length - 1);
+    }
+
+    // Safety clamps
+    if (currentStopIndex < 0) currentStopIndex = 0;
+    if (currentStopIndex >= demoStops.length) currentStopIndex = demoStops.length - 1;
+    if (nextStopIndex <= currentStopIndex) nextStopIndex = Math.min(currentStopIndex + 1, demoStops.length - 1);
+    if (nextStopIndex >= demoStops.length) nextStopIndex = demoStops.length - 1;
+
+    const currentStop = demoStops[currentStopIndex];
+    const nextStop = demoStops[nextStopIndex];
+
+    // 5. SPEED: GPS speed if available (> 5 km/h), otherwise derivedSpeed, with moving average
+    const gpsSpeedKmh = (speedMps && speedMps > 0) ? speedMps * 3.6 : 0;
     const prevTrackingState = getTrackingState(busId);
-    const rawDerivedSpeed = prevTrackingState?.derivedSpeed ?? 0;
-    const effectiveSpeed = rawDerivedSpeed > 5
-      ? Math.round(rawDerivedSpeed)
-      : Math.round(speedKmh ?? (prevProgression?.avgSpeedKmh ?? 35));
+    const derivedSpeed = prevTrackingState?.derivedSpeed ?? 0;
 
-    // Project bus position onto route corridor
-    console.log("[PROJECTION CHECK]", {
-      busLat,
-      busLng,
-      routeCoordsCount: normalizedRoute.routeCoords?.length,
-      firstCoord: normalizedRoute.routeCoords?.[0],
-      lastCoord: normalizedRoute.routeCoords?.[normalizedRoute.routeCoords.length - 1],
-    });
-    const projection = projectOntoRouteCorridor(busLat, busLng, normalizedRoute.routeCoords, busId);
+    let finalSpeedKmh = gpsSpeedKmh > 5 ? gpsSpeedKmh : (derivedSpeed > 5 ? derivedSpeed : 15);
+    finalSpeedKmh = Math.min(finalSpeedKmh, 120); // Clamp to max reasonable speed
 
-    console.log("[PROJECTION RESULT]", {
-      projected: !!projection,
-      snappedLat: projection?.snappedLat,
-      snappedLng: projection?.snappedLng,
-      distanceFromRoute: projection?.distanceFromRoute,
-      segmentIndex: projection?.segmentIndex,
-    });
+    // Add to rolling average and get smoothed speed
+    addSpeedSample(busId, finalSpeedKmh);
+    const rollingSpeedKmh = getRollingAverageSpeed(busId);
 
-    if (!projection) {
-      console.log("[PROGRESSION EARLY RETURN]", "PROJECTION_FAILED");
-      const fallbackStops = normalizedRoute.stops || [];
-      return {
-        ...createFallbackProgression(busId, gpsConfidence, accuracy),
-        currentStopName: fallbackStops[0] ? getSafeStopName(fallbackStops[0]) : null,
-        nextStopName:    fallbackStops[1] ? getSafeStopName(fallbackStops[1]) : null,
-        currentStopIndex: 0,
-        currentStopId:    fallbackStops[0] ? getSafeStopId(fallbackStops[0]) : null,
-        nextStopIndex:    fallbackStops.length > 1 ? 1 : -1,
-        nextStopId:       fallbackStops[1] ? getSafeStopId(fallbackStops[1]) : null,
-      };
-    }
-
-    // Diagnostic telemetry: confirm projection->stop mapping inputs are coherent
-    console.log("[PROGRESSION DEBUG]", {
-      busId,
-      projectedPoint: projection.projectedPoint,
-      nearestSegmentIndex: projection.segmentIndex,
-      routePoints: normalizedRouteCoords.length,
-      stopCount: normalizedRoute.stops?.length || 0,
-      firstStop: normalizedRoute.stops?.[0]
-        ? getSafeStopName(normalizedRoute.stops[0])
-        : null,
-      lastStop: normalizedRoute.stops?.length
-        ? getSafeStopName(normalizedRoute.stops[normalizedRoute.stops.length - 1])
-        : null,
-    });
-
-    // JITTER FILTERING: Skip if movement is below threshold
-    let jitterFiltered = false;
-    if (prevProgression?.lastProjectedPoint) {
-      const prevPoint = prevProgression.lastProjectedPoint;
-      const currPoint = projection.projectedPoint;
-      const moveDistance = haversineDistance(
-        prevPoint.lat || prevPoint[0],
-        prevPoint.lng || prevPoint[1],
-        currPoint.lat || currPoint[0],
-        currPoint.lng || currPoint[1]
+    // 6. ETA: distance along route from bus to next stop
+    let nextDistanceAlongRoute = 0;
+    for (let i = nearestCoordIndex; i < stopCoordIndices[nextStopIndex] && i < normalizedRouteCoords.length - 1; i++) {
+      nextDistanceAlongRoute += distanceMeters(
+        normalizedRouteCoords[i].lat, normalizedRouteCoords[i].lng,
+        normalizedRouteCoords[i + 1].lat, normalizedRouteCoords[i + 1].lng
       );
+    }
+    // Add straight-line from bus to nearest coord
+    nextDistanceAlongRoute += distanceMeters(busLat, busLng, snappedLat, snappedLng);
 
-      if (moveDistance < GPS_JITTER_THRESHOLD_METERS) {
-        jitterFiltered = true;
-        return {
-          ...prevProgression,
-          lastUpdate: Date.now(),
-          jitterFiltered: true
-        };
-      }
+    const etaSpeedKmh = Math.max(15, rollingSpeedKmh);
+    const etaMinutes = nextDistanceAlongRoute > 50
+      ? Math.max(1, Math.round(nextDistanceAlongRoute / ((etaSpeedKmh * 1000) / 60)))
+      : 0;
+
+    // 7. Progress percent
+    const routeProgressPercent = Math.round(
+      (nearestCoordIndex / Math.max(1, normalizedRouteCoords.length - 1)) * 100
+    );
+
+    // passedStopIds
+    const passedStopIds = [];
+    for (let i = 0; i < currentStopIndex; i++) {
+      if (demoStops[i]?.stopId) passedStopIds.push(demoStops[i].stopId);
     }
 
-    // Determine stop progression with GPS accuracy awareness
-    const stopProgress = determineStopProgression(
-      projection,
-      normalizedRoute.stops,
-      prevProgression,
-      accuracy,
-      busId
-    );
-    const { effectiveArrivalThreshold, effectiveHysteresis } = stopProgress;
-  
-  // Get stop names for display
-  const currentStop = stopProgress.currentStopIndex >= 0 ? normalizedRoute.stops[stopProgress.currentStopIndex] : null;
-  const nextStop = stopProgress.nextStopIndex >= 0 ? normalizedRoute.stops[stopProgress.nextStopIndex] : null;
-  const currentStopId = currentStop ? getSafeStopId(currentStop) : null;
-  const nextStopId = nextStop ? getSafeStopId(nextStop) : null;
-  const currentStopName = currentStop ? getSafeStopName(currentStop) : null;
-  const nextStopName = nextStop ? getSafeStopName(nextStop) : null;
+    console.log("[ROUTE-POLYLINE PROGRESSION]", {
+      nearestCoordIndex,
+      currentStopIndex,
+      nextStopIndex,
+      currentStop: currentStop?.name,
+      nextStop: nextStop?.name,
+      etaMinutes,
+      routeProgressPercent,
+      rollingSpeedKmh: Math.round(rollingSpeedKmh * 10) / 10,
+    });
 
-  // Calculate remaining distance along corridor
-  const remainingDistanceKm = (projection.totalRouteLength - projection.cumulativeDistance) / 1000;
-  
-  // Calculate progress percentage
-  const progressPercent = Math.round(
-    (projection.cumulativeDistance / projection.totalRouteLength) * 100
-  );
-  
-  // Calculate ETA using stable rolling speed smoothing
-  // Get distance to next stop from stopProgress (now includes nextStopDistance)
-  let nextStopDistanceMeters = stopProgress.nextStopDistance ?? 0;
-  if (!nextStopDistanceMeters && stopProgress.currentStopDistance !== null) {
-    // No next stop, use current stop distance
-    nextStopDistanceMeters = stopProgress.currentStopDistance;
-  }
-  
-  const { etaMinutes, remainingDistanceMeters, rollingSpeedKmh } = computeEta(
-    busId,
-    nextStopId,
-    nextStopDistanceMeters,
-    effectiveSpeed
-  );
-  
-  // Check for APPROACHING event (within 2 minutes of stop)
-  checkApproachingEvent(busId, nextStopId, etaMinutes, nextStopName);
+    const progression = {
+      busId,
+      isSnapped: true,
+      nearestRouteIndex: nearestCoordIndex,
+      snappedLat,
+      snappedLng,
+      distanceFromRoute: Math.round(distanceFromRoute),
+      gpsConfidence,
+      gpsAccuracy: safeNumber(accuracy) ?? null,
+      tripId: route.tripId || null,
+      routeId: route.routeId || null,
+      currentStopIndex,
+      routeProgressIndex: currentStopIndex,
+      currentStopId: currentStop?.stopId ?? null,
+      currentStopName: currentStop?.name ?? null,
+      nextStopIndex,
+      nextStopId: nextStop?.stopId ?? null,
+      nextStopName: nextStop?.name ?? null,
+      passedStopIds,
+      remainingDistanceKm: 0,
+      remainingDistanceMeters: Math.round(nextDistanceAlongRoute),
+      progressPercent: routeProgressPercent,
+      etaMinutes,
+      avgSpeedKmh: Math.round(rollingSpeedKmh * 10) / 10,
+      derivedSpeed: finalSpeedKmh,
+      occupancy: Math.floor(25 + Math.random() * 35),
+      capacity: 50,
+      cumulativeDistance: 0,
+      totalRouteLength: 0,
+      lastProjectedPoint: { lat: snappedLat, lng: snappedLng },
+      lastUpdate: Date.now(),
+      jitterFiltered: false,
+    };
 
-  // Calculate effective arrival threshold based on GPS accuracy
-  const effectiveThreshold = Math.max(
-    STOP_ARRIVAL_THRESHOLD_METERS,
-    accuracy || 0
-  );
+    // Store updated progression
+    setBusProgression(busId, progression);
 
-  // Build progression result
-  const progression = {
-    busId,
-    isSnapped: true,
-    distanceFromRoute: safeNumber(projection.distanceFromCorridor) ?? null,
-    gpsConfidence,
-    gpsAccuracy: safeNumber(accuracy) ?? null,
-    effectiveThreshold: safeNumber(effectiveThreshold) ?? STOP_ARRIVAL_THRESHOLD_METERS,
-    tripId: normalizedRoute.tripId || null,
-    routeId: normalizedRoute.routeId || null,
-    currentStopIndex: stopProgress.currentStopIndex,
-    currentStopId,
-    currentStopName,
-    nextStopIndex: stopProgress.nextStopIndex,
-    nextStopId,
-    nextStopName,
-    passedStopIds: stopProgress.passedStopIds ?? [],
-    remainingDistanceKm: safeNumber(Math.round(remainingDistanceKm * 100) / 100) ?? 0,
-    remainingDistanceMeters: safeNumber(remainingDistanceMeters) || null,
-    progressPercent: safeNumber(progressPercent) ?? 0,
-    etaMinutes: safeNumber(etaMinutes) ?? null,
-    avgSpeedKmh: safeNumber(Math.round(rollingSpeedKmh * 10) / 10) ?? 0,
-    derivedSpeed: effectiveSpeed,
-    occupancy: Math.floor(25 + Math.random() * 35),
-    capacity: 50,
-    cumulativeDistance: safeNumber(Math.round(projection.cumulativeDistance)) ?? 0,
-    totalRouteLength: safeNumber(Math.round(projection.totalRouteLength)) ?? 0,
-    lastProjectedPoint: projection.projectedPoint || null,
-    lastUpdate: Date.now(),
-    jitterFiltered,
-    routeCoords: normalizedRoute.routeCoords // Store normalized coords for downstream use
-  };
-  
-  console.log("[FINAL PROGRESSION]", {
-    currentStopId,
-    nextStopId,
-    currentStopName,
-    nextStopName,
-    nextStopEtaMinutes: etaMinutes,
-    routeProgressIndex: stopProgress.currentStopIndex,
-    isSnapped: progression.isSnapped,
-    distanceFromRoute: projection?.distanceFromRoute,
-  });
-
-  console.log("[ENGINE FINAL RESULT]", {
-    currentStopName,
-    nextStopName,
-    routeProgressIndex: stopProgress.currentStopIndex,
-    isSnapped: progression.isSnapped,
-    distanceFromRoute: progression.distanceFromRoute,
-  });
-
-  // Progression computed successfully - minimal telemetry
-  
-  // STOP EVENT ENGINE: Detect ARRIVAL, DWELLING, DEPARTURE lifecycle events
-  updateStopEventState(
-    busId,
-    progression,
-    stopProgress.currentStopDistance,
-    effectiveArrivalThreshold,
-    effectiveHysteresis
-  );
-  
-  // Store updated progression
-  setBusProgression(busId, progression);
-  
-  // Debug instrumentation - reduced for production
-  if (jitterFiltered) {
-    console.log("[PROGRESSION] Jitter filtered", { busId });
-  }
-  
-  // Final result - only log failures
-  if (progression.nextStopIndex < 0) {
-    console.warn("[PROGRESSION] No next stop", { busId });
-  }
-  
-  return progression;
+    return progression;
   } catch (error) {
-    // CRITICAL: Never let progression failures break tracking
     console.error("[PROGRESSION] CRASH", {
       busId,
       error: error.message,
@@ -1597,7 +1391,6 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     return createFallbackProgression(busId, gpsConfidence, accuracy);
   }
 }
-
 /**
  * Check if progression changed meaningfully (for emission throttling)
  */
@@ -1674,5 +1467,6 @@ module.exports = {
   clearBusState, // Full cleanup for offline/disconnect
   clearBusProgression, // Partial cleanup for trip change
   haversineDistance,
+  densifyRouteCoords, // Dense coordinate interpolation
   GPS_JITTER_THRESHOLD_METERS // Export for unified use
 };

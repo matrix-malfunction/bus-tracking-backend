@@ -672,64 +672,6 @@ async function _updateLocationUnsafe(req, res) {
     // FLOW TELEMETRY STEP 6: After computeBusProgression
     console.log("[FLOW] STEP 6 - After computeBusProgression");
 
-    // === ROUTE SNAPPING (Corridor Locking) ===
-    // Calculate snapped coordinates for professional AVL-style rendering
-    // CRITICAL: This is an optional enhancement - tracking must continue even if snapping fails
-    let snappedCoords = null;
-    
-    // EXECUTION TRACE: Track route lookup (routeInfo already hoisted above)
-    console.log("[SNAP TRACE] busId:", busId, "routeInfo:", routeInfo);
-    
-    let routeData = null;
-    if (routeInfo && routeInfo.routeId) {
-      routeData = routes.find(r => r.id === routeInfo.routeId);
-      console.log("[SNAP TRACE] Looking for routeId:", routeInfo.routeId, "found:", !!routeData);
-    }
-    
-    // Normalize route coordinate access (handle both formats)
-    const routeCoords =
-      routeData?.routeCoords ||
-      routeData?.coordinates ||
-      null;
-    
-    console.log("[SNAP TRACE] coords source:", {
-      hasRouteCoords: !!routeData?.routeCoords,
-      hasCoordinates: !!routeData?.coordinates,
-      coordsCount: Array.isArray(routeCoords) ? routeCoords.length : 0
-    });
-    
-    if (routeCoords && routeCoords.length >= 2) {
-      try {
-        console.log("[SNAP TRACE] Invoking snapToRouteCorridor...");
-        // Import snapToRouteCorridor from progressionEngine
-        const { snapToRouteCorridor } = require("../utils/progressionEngine");
-        snappedCoords = snapToRouteCorridor(numLat, numLng, routeCoords);
-        
-        console.log("[SNAP TRACE] snap result:", snappedCoords ? {
-          hasSnappedLat: !!snappedCoords.snappedLat,
-          hasSnappedLng: !!snappedCoords.snappedLng,
-          distance: Math.round(snappedCoords.distanceFromRoute),
-          isSnapped: snappedCoords.isSnapped
-        } : null);
-        
-        if (snappedCoords) {
-          console.log("[BACKEND] Route snapping:", {
-            busId,
-            raw: [numLat, numLng],
-            snapped: [snappedCoords.snappedLat, snappedCoords.snappedLng],
-            distanceFromRoute: Math.round(snappedCoords.distanceFromRoute),
-            isSoftSnap: snappedCoords.isSoftSnap ?? false
-          });
-        }
-      } catch (error) {
-        // CRITICAL: Never let snapping failures break the tracking pipeline
-        console.error("[Route Snap] Failed for bus", busId, ":", error.message);
-        snappedCoords = null;
-      }
-    } else {
-      console.log("[SNAP TRACE] No valid routeCoords - skipping snapping");
-    }
-
     // === SOCKET EMIT ===
     // CRITICAL: Socket emit failure must not break tracking
     try {
@@ -742,14 +684,7 @@ async function _updateLocationUnsafe(req, res) {
           // Raw GPS coordinates (always included)
           latitude: sanitizeNumber(numLat),
           longitude: sanitizeNumber(numLng),
-          // Snapped coordinates (if within route corridor)
-          ...(snappedCoords && {
-            snappedLat: sanitizeNumber(snappedCoords.snappedLat),
-            snappedLng: sanitizeNumber(snappedCoords.snappedLng),
-            isSnapped: true,
-            distanceFromRoute: sanitizeNumber(snappedCoords.distanceFromRoute),
-            isSoftSnap: snappedCoords.isSoftSnap ?? false
-          }),
+
           speed: sanitizeNumber(speed) ?? 0,
           derivedSpeed: sanitizeNumber(derivedSpeed) ?? 0,
           heading: Math.round(sanitizeNumber(heading) ?? 0),
@@ -760,12 +695,11 @@ async function _updateLocationUnsafe(req, res) {
             routeColor: routeInfo.routeColor,
             direction: routeInfo.direction,
             tripId: routeInfo.tripId,
-            routeCoords: routeInfo.routeCoords || routeCoords || []
           }),
           // Include progression fields for live stop display (from progression engine)
           ...(progression && {
-            snappedLat: sanitizeNumber(progression.lastProjectedPoint?.lat) ?? null,
-            snappedLng: sanitizeNumber(progression.lastProjectedPoint?.lng) ?? null,
+            snappedLat: sanitizeNumber(progression.snappedLat) ?? sanitizeNumber(progression.lastProjectedPoint?.lat) ?? null,
+            snappedLng: sanitizeNumber(progression.snappedLng) ?? sanitizeNumber(progression.lastProjectedPoint?.lng) ?? null,
             isSnapped: progression.isSnapped ?? false,
             distanceFromRoute: sanitizeNumber(progression.distanceFromRoute) ?? null,
             currentStopId: progression.currentStopId ?? null,
@@ -962,6 +896,7 @@ async function _updateLocationUnsafe(req, res) {
         timestamp: Date.now(),
         trackingActive: true,
       };
+      delete emitPayload.routeCoords;
       // Clean undefined values for JSON safety
       const safeEmit = JSON.parse(JSON.stringify(emitPayload));
       io.emit("BUS_LOCATION_UPDATE", safeEmit);
@@ -1454,7 +1389,19 @@ const startTracking = async (req, res) => {
       const rawPolyline = direction === "INBOUND"
         ? [...(route.returnCoordinates || route.routeCoords || route.coordinates || [])].reverse()
         : (route.routeCoords || route.coordinates || []);
-      const denseCoords = rawPolyline.length >= 2 ? rawPolyline : stopPositionCoords;
+      let denseCoords = rawPolyline.length >= 2 ? rawPolyline : stopPositionCoords;
+      // Densify sparse coordinates to ~15m spacing for accurate backend snapping
+      if (denseCoords.length >= 2) {
+        const { densifyRouteCoords } = require("../utils/progressionEngine");
+        const normalized = denseCoords.map(c => {
+          if (Array.isArray(c) && c.length >= 2) return { lat: Number(c[0]), lng: Number(c[1]) };
+          if (c && typeof c === "object" && c.lat !== undefined) return { lat: Number(c.lat), lng: Number(c.lng) };
+          return null;
+        }).filter(Boolean);
+        const densified = densifyRouteCoords(normalized);
+        denseCoords = densified.map(c => [c.lat, c.lng]);
+        console.log("[START TRACKING] Densified route coords:", { original: normalized.length, dense: denseCoords.length });
+      }
 
       if (!denseCoords?.length || denseCoords.length < 2) {
         console.error("[TRACKING START] Missing routeCoords", { routeId });
@@ -1565,6 +1512,7 @@ const startTracking = async (req, res) => {
           timestamp: Date.now(),
           trackingActive: true,
         };
+        delete emitPayload.routeCoords;
         const safeEmit = JSON.parse(JSON.stringify(emitPayload));
         console.log("[BACKEND] 📡 Emitting FULL STATE BUS_LOCATION_UPDATE on start:", {
           busId,
