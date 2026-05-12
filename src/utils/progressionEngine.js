@@ -1210,8 +1210,8 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       coordinates: normalizedRouteCoords
     };
 
-    // === DEMO-SAFE FALLBACK PROGRESSION ===
-    // Bypasses complex corridor projection for stable nearest-stop + next-stop + ETA output
+    // === ROUTE-POLYLINE-BASED PROGRESSION ===
+    // Uses dense route coordinates to determine stop position reliably
     const rawStops = normalizedRoute.stops || [];
     const demoStops = rawStops.map((stop) => {
       if (typeof stop === "string") {
@@ -1226,45 +1226,91 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
     }).filter(Boolean);
 
     if (demoStops.length >= 2) {
-      let nearestIndex = 0;
-      let nearestDistance = Infinity;
-
-      demoStops.forEach((stop, index) => {
-        const d = distanceMeters(busLat, busLng, stop.lat, stop.lng);
-        if (d < nearestDistance) {
-          nearestDistance = d;
-          nearestIndex = index;
+      // 1. Find nearest route coordinate index to bus
+      let nearestCoordIndex = 0;
+      let minCoordDist = Infinity;
+      normalizedRouteCoords.forEach((coord, idx) => {
+        const d = distanceMeters(busLat, busLng, coord.lat, coord.lng);
+        if (d < minCoordDist) {
+          minCoordDist = d;
+          nearestCoordIndex = idx;
         }
       });
 
-      // MONOTONIC GUARD + ARRIVAL THRESHOLD: once bus reaches stop N, do not move backward to N-1,
-      // and only advance to N+1 when within 60m of the target stop
+      // 2. Map each stop to its nearest route coordinate index
+      const stopCoordIndices = demoStops.map((stop) => {
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        normalizedRouteCoords.forEach((coord, idx) => {
+          const d = distanceMeters(stop.lat, stop.lng, coord.lat, coord.lng);
+          if (d < bestDist) {
+            bestDist = d;
+            bestIdx = idx;
+          }
+        });
+        return bestIdx;
+      });
+
+      // 3. Find raw next stop ahead of bus on the route polyline
+      let rawNextStopIndex = -1;
+      for (let i = 0; i < demoStops.length; i++) {
+        if (stopCoordIndices[i] >= nearestCoordIndex) {
+          rawNextStopIndex = i;
+          break;
+        }
+      }
+      if (rawNextStopIndex === -1) {
+        rawNextStopIndex = demoStops.length - 1;
+      }
+
+      // 4. Hysteresis: only advance stop if within 40m of target
       const previousState = getTrackingState(busId);
-      const previousIndex = Number.isFinite(previousState?.routeProgressIndex)
+      const previousCurrentIndex = Number.isFinite(previousState?.routeProgressIndex)
         ? previousState.routeProgressIndex
         : -1;
 
-      let safeNearestIndex;
-      let shouldAdvance = false;
-      let distanceToNextStop = null;
-      if (previousIndex === -1) {
-        safeNearestIndex = nearestIndex;
-      } else if (nearestIndex <= previousIndex) {
-        safeNearestIndex = previousIndex;
+      let currentStopIndex;
+      let nextStopIndex;
+
+      if (previousCurrentIndex === -1) {
+        // First run — use polyline position directly
+        currentStopIndex = rawNextStopIndex > 0 ? rawNextStopIndex - 1 : 0;
+        nextStopIndex = rawNextStopIndex;
       } else {
-        distanceToNextStop = distanceMeters(busLat, busLng, demoStops[nearestIndex].lat, demoStops[nearestIndex].lng);
-        shouldAdvance = distanceToNextStop <= ARRIVAL_THRESHOLD_METERS;
-        safeNearestIndex = shouldAdvance ? nearestIndex : previousIndex;
+        // Candidate is one stop ahead of previous current
+        const candidateNext = previousCurrentIndex + 1;
+        const candidateNextStop = demoStops[candidateNext];
+
+        if (candidateNextStop) {
+          const distToCandidate = distanceMeters(busLat, busLng, candidateNextStop.lat, candidateNextStop.lng);
+          if (distToCandidate < 40) {
+            // Close enough to advance
+            currentStopIndex = candidateNext;
+            nextStopIndex = Math.min(candidateNext + 1, demoStops.length - 1);
+          } else {
+            // Stay at previous current, next remains candidate
+            currentStopIndex = previousCurrentIndex;
+            nextStopIndex = candidateNext;
+          }
+        } else {
+          // At or past end of route
+          currentStopIndex = previousCurrentIndex;
+          nextStopIndex = previousCurrentIndex;
+        }
       }
 
-      const currentStop = demoStops[safeNearestIndex];
-      const nextIndex = Math.min(safeNearestIndex + 1, demoStops.length - 1);
-      const nextStop = demoStops[nextIndex];
+      // Safety clamps
+      if (currentStopIndex < 0) currentStopIndex = 0;
+      if (currentStopIndex >= demoStops.length) currentStopIndex = demoStops.length - 1;
+      if (nextStopIndex < currentStopIndex) nextStopIndex = currentStopIndex;
+      if (nextStopIndex >= demoStops.length) nextStopIndex = demoStops.length - 1;
+
+      const currentStop = demoStops[currentStopIndex];
+      const nextStop = demoStops[nextStopIndex];
 
       const nextDistance = distanceMeters(busLat, busLng, nextStop.lat, nextStop.lng);
       const fallbackSpeedKmh = speedMps * 3.6;
 
-      // Effective speed: use actual driver speed, no hardcoded fallbacks
       const prevTrackingState = getTrackingState(busId);
       const rawDerivedSpeed = prevTrackingState?.derivedSpeed || 0;
       const effectiveSpeed = rawDerivedSpeed && rawDerivedSpeed > 5
@@ -1273,7 +1319,7 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
       const etaSpeedKmh = Math.max(15, effectiveSpeed);
       const etaMinutes = Math.max(1, Math.round(nextDistance / ((etaSpeedKmh * 1000) / 60)));
 
-      // Dynamic route-based progressPercent (prevents freeze at ~88% from stop-index approach)
+      // Route progress based on nearest dense coordinate
       let routeProgressIndex = 0;
       let minRouteDist = Infinity;
       normalizedRouteCoords.forEach((coord, idx) => {
@@ -1287,18 +1333,21 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
         (routeProgressIndex / Math.max(1, normalizedRouteCoords.length - 1)) * 100
       );
 
-      console.log("[DEMO PROGRESSION]", {
-        previousIndex,
-        nearestIndex,
-        safeNearestIndex,
-        shouldAdvance,
-        distanceToNextStop: distanceToNextStop ? Math.round(distanceToNextStop) : null,
+      // passedStopIds: all stops before current
+      const passedStopIds = [];
+      for (let i = 0; i < currentStopIndex; i++) {
+        if (demoStops[i]?.stopId) passedStopIds.push(demoStops[i].stopId);
+      }
+
+      console.log("[ROUTE-POLYLINE PROGRESSION]", {
+        nearestCoordIndex,
+        currentStopIndex,
+        nextStopIndex,
         currentStop: currentStop?.name,
         nextStop: nextStop?.name,
         etaMinutes,
         routeProgressPercent,
         effectiveSpeed,
-        speed: safeSpeed,
       });
 
       return {
@@ -1309,13 +1358,13 @@ function computeBusProgression(busId, busLat, busLng, speedMps, route, accuracy)
         gpsAccuracy: safeNumber(accuracy) || null,
         tripId: normalizedRoute.tripId || null,
         routeId: normalizedRoute.routeId || null,
-        currentStopIndex: safeNearestIndex,
+        currentStopIndex,
         currentStopId: currentStop?.stopId ?? null,
         currentStopName: currentStop?.name ?? null,
-        nextStopIndex: nextIndex < demoStops.length ? nextIndex : -1,
+        nextStopIndex: nextStopIndex < demoStops.length ? nextStopIndex : -1,
         nextStopId: nextStop?.stopId ?? null,
         nextStopName: nextStop?.name ?? null,
-        passedStopIds: [],
+        passedStopIds,
         remainingDistanceKm: 0,
         remainingDistanceMeters: 0,
         progressPercent: routeProgressPercent,
