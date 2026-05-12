@@ -405,6 +405,25 @@ async function _updateLocationUnsafe(req, res) {
     
     // FLOW TELEMETRY STEP 2: After validation
     console.log("[FLOW] STEP 2 - Validation passed");
+
+    // === JUMP PROTECTION: Ignore impossible location jumps (>2km) ===
+    const prevState = getTrackingState(busId);
+    if (prevState?.lat != null && prevState?.lng != null) {
+      const jumpDistance = haversineDistance(prevState.lat, prevState.lng, numLat, numLng);
+      if (jumpDistance > 2000) {
+        console.log("[BACKEND] BLOCKED - impossible location jump:", {
+          busId,
+          jumpDistance: Math.round(jumpDistance),
+          from: [prevState.lat, prevState.lng],
+          to: [numLat, numLng],
+        });
+        return res.status(200).json({
+          ignored: true,
+          reason: "impossible_location_jump",
+          jumpDistance: Math.round(jumpDistance),
+        });
+      }
+    }
     
     // === UPDATE DATABASE ===
     let updated;
